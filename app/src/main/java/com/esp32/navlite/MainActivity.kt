@@ -43,6 +43,19 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener {
 
         findViewById<Button>(R.id.btnConnect).setOnClickListener {
             ensureBlePermissionsAndConnect()
+        HomeSyncManager.start(applicationContext)
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            androidx.core.app.ActivityCompat.requestPermissions(
+                this,
+                arrayOf(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                ),
+                201
+            )
         }
 
         findViewById<Button>(R.id.btnDisconnect).setOnClickListener {
