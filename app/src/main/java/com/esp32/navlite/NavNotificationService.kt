@@ -29,14 +29,13 @@ class NavNotificationService : NotificationListenerService() {
 
         val turnBitmap = extractTurnBitmap(notification, extras)
 
-        // Ignore non-navigation Maps popups (like "Rate this place")
         if (!sbn.isOngoing && turnBitmap == null) return
         if (rawTitle.isEmpty() && rawText.isEmpty() && turnBitmap == null) return
 
         val combined = "$rawTitle $rawText $rawBigText".lowercase()
 
-        // 1. First check if Maps wrote turn text (English / Marathi / Hindi)
-       val textDirection = when {
+        // 1. Check Maps text first (Roundabout, Destination, Keep L/R, U-Turn, Turn L/R)
+        val textDirection = when {
             combined.contains("roundabout") || combined.contains("exit") -> when {
                 combined.contains("1st") || combined.contains("first") || combined.contains("1 ला") -> "Roundabout 1"
                 combined.contains("3rd") || combined.contains("third") || combined.contains("3 रा") -> "Roundabout 3"
@@ -45,9 +44,11 @@ class NavNotificationService : NotificationListenerService() {
             combined.contains("destination") || combined.contains("arrive") ||
                 combined.contains("reached") || combined.contains("पोहोचला") -> "Destination"
             combined.contains("keep left") || combined.contains("slight left") ||
-                combined.contains("bear left") -> "Keep Left"
+                combined.contains("stay left") || combined.contains("bear left") ||
+                combined.contains("fork left") || combined.contains("डावीकडे राहा") -> "Keep Left"
             combined.contains("keep right") || combined.contains("slight right") ||
-                combined.contains("bear right") -> "Keep Right"
+                combined.contains("stay right") || combined.contains("bear right") ||
+                combined.contains("fork right") || combined.contains("उजवीकडे राहा") -> "Keep Right"
             combined.contains("u-turn") || combined.contains("uturn") ||
                 combined.contains("u turn") || combined.contains("यू-टर्न") -> "U-Turn"
             combined.contains("left") || combined.contains("डावीकडे") ||
@@ -57,19 +58,17 @@ class NavNotificationService : NotificationListenerService() {
             else -> null
         }
 
-        // 2. If text has no direction, read the small side arrow icon from Maps notification
+        // 2. If text has no direction, analyze the side arrow icon shape
         val directionLabel = textDirection
             ?: turnBitmap?.let { detectDirectionFromBitmap(it) }
             ?: "Straight"
 
-        // Extract distance (e.g. "250 m", "1.2 km")
         val distanceRegex = Regex("\\b\\d+(\\.\\d+)?\\s?(m|km|ft|mi|मी|किमी)\\b", RegexOption.IGNORE_CASE)
         val distanceMatch = distanceRegex.find(rawTitle) ?: distanceRegex.find(rawText)
         val distance = distanceMatch?.value ?: rawTitle.take(12)
 
         val streetTitle = if (rawText.isNotEmpty()) rawText else rawTitle
 
-        // Parse ETA / duration from subText
         val parts = rawSubText.split("·", "•", "-")
             .map { it.trim() }
             .filter { it.isNotEmpty() }
@@ -99,7 +98,6 @@ class NavNotificationService : NotificationListenerService() {
 
     private fun extractTurnBitmap(notification: Notification, extras: Bundle): Bitmap? {
         return try {
-            // Standard notification largeIcon (where Google Maps puts the side turn arrow)
             notification.getLargeIcon()?.let { loadFromIcon(it) }
                 ?: extractFromExtra(extras, "android.largeIcon.big")
                 ?: extractFromExtra(extras, "android.largeIcon")
@@ -141,18 +139,17 @@ class NavNotificationService : NotificationListenerService() {
     }
 
     /**
-     * Analyzes Google Maps's turn arrow icon shape:
-     * - Two vertical legs in bottom half -> U-Turn
-     * - Bottom entry stem on right, arrow leaning left -> Turn Left
-     * - Bottom entry stem on left, arrow leaning right -> Turn Right
-     * - Symmetric vertical shaft -> Straight
+     * Distinguishes:
+     * - U-Turn (two bottom legs + top arch)
+     * - Keep Left / Keep Right (45° diagonal pointing into top corner, no full horizontal bar)
+     * - Turn Left / Turn Right (90° bend with horizontal arm + empty top corner)
+     * - Straight
      */
     private fun detectDirectionFromBitmap(bmp: Bitmap): String {
         val size = 48
         val pixels = IntArray(size * size)
         bmp.getPixels(pixels, 0, size, 0, 0, size, size)
 
-        // Inspect 4 corners to see if background is transparent or solid colored
         val corners = listOf(
             pixels[0],
             pixels[size - 1],
@@ -167,7 +164,6 @@ class NavNotificationService : NotificationListenerService() {
         val fg = Array(size) { BooleanArray(size) }
 
         if (avgCornerAlpha < 50.0) {
-            // Transparent background: find brightest opaque pixels (ignores dimmed fork branches)
             var maxLum = 0.0
             var minLum = 255.0
             for (p in pixels) {
@@ -177,15 +173,14 @@ class NavNotificationService : NotificationListenerService() {
                     if (lum < minLum) minLum = lum
                 }
             }
-            val filterDimmed = (maxLum > 200.0 && (maxLum - minLum) > 60.0)
+            val filterDimmed = (maxLum > 200.0 && (maxLum - minLum) > 55.0)
             for (y in 0 until size) {
                 for (x in 0 until size) {
                     val p = pixels[y * size + x]
-                    val a = Color.alpha(p)
-                    if (a >= 165) {
+                    if (Color.alpha(p) >= 165) {
                         if (filterDimmed) {
                             val lum = 0.299 * Color.red(p) + 0.587 * Color.green(p) + 0.114 * Color.blue(p)
-                            fg[y][x] = lum >= maxLum * 0.72
+                            fg[y][x] = lum >= maxLum * 0.74
                         } else {
                             fg[y][x] = true
                         }
@@ -193,7 +188,6 @@ class NavNotificationService : NotificationListenerService() {
                 }
             }
         } else {
-            // Solid background (e.g. Maps dark green): compare color distance from corner background
             var maxDist = 0.0
             val dists = DoubleArray(size * size)
             for (i in pixels.indices) {
@@ -203,7 +197,7 @@ class NavNotificationService : NotificationListenerService() {
                 if (d > maxDist) maxDist = d
             }
             if (maxDist < 60.0) return "Straight"
-            val thresh = maxDist * 0.55
+            val thresh = maxDist * 0.62
             for (y in 0 until size) {
                 for (x in 0 until size) {
                     fg[y][x] = dists[y * size + x] >= thresh
@@ -211,7 +205,7 @@ class NavNotificationService : NotificationListenerService() {
             }
         }
 
-        // Find tight bounding box of the arrow
+        // Tight bounding box
         var minX = size
         var maxX = -1
         var minY = size
@@ -233,7 +227,7 @@ class NavNotificationService : NotificationListenerService() {
         val h = maxY - minY + 1
         if (count < 15 || w < 5 || h < 5) return "Straight"
 
-        // 1. Check for U-Turn: two distinct vertical legs in the lower section (65%..88% height)
+        // 1. Check U-Turn
         var twoLegRows = 0
         val yStart = minY + (h * 0.65).toInt()
         val yEnd = minY + (h * 0.88).toInt()
@@ -247,12 +241,8 @@ class NavNotificationService : NotificationListenerService() {
             for (x in minX..maxX) {
                 if (fg[y][x]) {
                     if (!inRun) {
-                        if (runs == 0 || gapLen >= 2) {
-                            inRun = true
-                            runLen = 1
-                        } else {
-                            inRun = true
-                        }
+                        inRun = true
+                        if (runs == 0 || gapLen >= 2) runLen = 1
                     } else {
                         runLen++
                     }
@@ -270,7 +260,6 @@ class NavNotificationService : NotificationListenerService() {
             if (runs >= 2) twoLegRows++
         }
 
-        // Check top arch presence for U-Turn
         var topCenterPixels = 0
         for (y in minY..(minY + (h * 0.30).toInt())) {
             for (x in (minX + (w * 0.35).toInt())..(minX + (w * 0.65).toInt())) {
@@ -282,7 +271,7 @@ class NavNotificationService : NotificationListenerService() {
             return "U-Turn"
         }
 
-        // 2. Compare horizontal center of top half vs bottom stem
+        // 2. Horizontal shift between top half and bottom stem
         var sumXTop = 0.0
         var cntTop = 0
         var sumXBottom = 0.0
@@ -312,13 +301,74 @@ class NavNotificationService : NotificationListenerService() {
         val cxBottom = if (cntBottom > 0) sumXBottom / cntBottom else 0.5
         val shift = cxTop - cxBottom
 
-        // Standard Google Maps turn icons:
-        // Left turn: stem at bottom-right (cxBottom ~0.75), arrow bends left (cxTop ~0.42) -> shift < 0
-        // Right turn: stem at bottom-left (cxBottom ~0.25), arrow bends right (cxTop ~0.58) -> shift > 0
-        if (shift < -0.09) return "Turn Left"
-        if (shift > 0.09) return "Turn Right"
+        // 3. Features to separate 90° Turn vs 45° Keep/Slight arrow:
+        //    - Turn L/R has a horizontal bar spanning ~90-100% width and an empty top corner
+        //    - Keep L/R points diagonally into the top corner (filled top corner, maxRun < 80%)
+        var maxRun = 0
+        for (y in minY..maxY) {
+            var cur = 0
+            for (x in minX..maxX) {
+                if (fg[y][x]) {
+                    cur++
+                    if (cur > maxRun) maxRun = cur
+                } else {
+                    cur = 0
+                }
+            }
+        }
+        val maxRunRatio = maxRun.toDouble() / w.coerceAtLeast(1)
 
-        // Fallback for flat horizontal arrows (⬅ / ➡)
+        val cw = (w * 0.22).toInt().coerceAtLeast(2).coerceAtMost(w)
+        val ch = (h * 0.22).toInt().coerceAtLeast(2).coerceAtMost(h)
+        var tlCount = 0
+        var trCount = 0
+        for (y in minY until (minY + ch)) {
+            for (x in minX until (minX + cw)) {
+                if (fg[y][x]) tlCount++
+            }
+            for (x in (maxX - cw + 1)..maxX) {
+                if (fg[y][x]) trCount++
+            }
+        }
+        val cornerArea = (cw * ch).toDouble().coerceAtLeast(1.0)
+        val tlFill = tlCount / cornerArea
+        val trFill = trCount / cornerArea
+
+        var sumYAtLeft = 0.0
+        var cntAtLeft = 0
+        var sumYAtRight = 0.0
+        var cntAtRight = 0
+        val leftEdgeMax = minOf(maxX, minX + 1)
+        val rightEdgeMin = maxOf(minX, maxX - 1)
+        for (y in minY..maxY) {
+            val ny = (y - minY).toDouble() / (h - 1).coerceAtLeast(1)
+            for (x in minX..leftEdgeMax) {
+                if (fg[y][x]) {
+                    sumYAtLeft += ny
+                    cntAtLeft++
+                }
+            }
+            for (x in rightEdgeMin..maxX) {
+                if (fg[y][x]) {
+                    sumYAtRight += ny
+                    cntAtRight++
+                }
+            }
+        }
+        val nyAtLeft = if (cntAtLeft > 0) sumYAtLeft / cntAtLeft else 0.5
+        val nyAtRight = if (cntAtRight > 0) sumYAtRight / cntAtRight else 0.5
+
+        if (shift < -0.09) {
+            val isKeepLeft = (tlFill >= 0.25 && maxRunRatio < 0.82) ||
+                (nyAtLeft < 0.16 && maxRunRatio < 0.85)
+            return if (isKeepLeft) "Keep Left" else "Turn Left"
+        }
+        if (shift > 0.09) {
+            val isKeepRight = (trFill >= 0.25 && maxRunRatio < 0.82) ||
+                (nyAtRight < 0.16 && maxRunRatio < 0.85)
+            return if (isKeepRight) "Keep Right" else "Turn Right"
+        }
+
         val totalSide = (leftMass + rightMass).coerceAtLeast(1)
         val sideBias = (rightMass - leftMass).toDouble() / totalSide
         if (sideBias < -0.22) return "Turn Left"
