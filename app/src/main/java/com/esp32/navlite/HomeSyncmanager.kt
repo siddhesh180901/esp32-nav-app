@@ -44,6 +44,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     private var sensorManager: SensorManager? = null
     private var locationManager: LocationManager? = null
 
+    // Compass smoothing state
     private var lastAccel: FloatArray? = null
     private var lastMag: FloatArray? = null
     private var smoothSin = 0.0
@@ -51,12 +52,14 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     private var hasSmoothInit = false
     private var lastGpsBearingTime = 0L
 
+    // Live Home Screen fields
     private var currentTime = "--:--"
     private var currentBattery = "--"
     private var currentTemp = "--"
     private var currentCity = "Loc..."
     private var currentHeading = "N"
 
+    // Throttling state
     private var lastSentPayload = ""
     private var lastSendMs = 0L
     private var lastWeatherFetchMs = 0L
@@ -79,8 +82,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     }
 
     fun start(context: Context) {
-        val ctx = context.applicationContext
-        appContext = ctx
+        appContext = context.applicationContext
         refreshTimeAndBattery()
         tryStartLocationUpdates()
 
@@ -90,22 +92,22 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         }
         started = true
 
-        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        // 1. Start Compass Sensors (Rotation Vector with Accel+Mag fallback)
+        val sm = appContext?.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         sensorManager = sm
-        if (sm != null) {
-            val rotSensor = sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-            if (rotSensor != null) {
-                sm.registerListener(this, rotSensor, SensorManager.SENSOR_DELAY_UI)
-            } else {
-                val acc = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-                val mag = sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
-                if (acc != null && mag != null) {
-                    sm.registerListener(this, acc, SensorManager.SENSOR_DELAY_UI)
-                    sm.registerListener(this, mag, SensorManager.SENSOR_DELAY_UI)
-                }
+        val rotSensor = sm?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        if (rotSensor != null) {
+            sm.registerListener(this, rotSensor, SensorManager.SENSOR_DELAY_UI)
+        } else {
+            val acc = sm?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+            val mag = sm?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+            if (acc != null && mag != null) {
+                sm.registerListener(this, acc, SensorManager.SENSOR_DELAY_UI)
+                sm.registerListener(this, mag, SensorManager.SENSOR_DELAY_UI)
             }
         }
 
+        // 2. Start Periodic Sync Ticker
         mainHandler.removeCallbacks(periodicSync)
         mainHandler.post(periodicSync)
     }
@@ -113,6 +115,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     fun setNavigationActive(active: Boolean) {
         isNavActive = active
         if (!active) {
+            // Wait 600ms after Nav-Stop packet so BLE GATT finishes cleanly
             mainHandler.postDelayed({
                 if (!isNavActive) {
                     refreshTimeAndBattery()
@@ -203,7 +206,10 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         }
     }
 
+    // ==================== LIVE COMPASS ====================
+
     override fun onSensorChanged(event: SensorEvent) {
+        // When riding > 7 km/h, prefer true GPS travel heading over magnetic sensor
         if (System.currentTimeMillis() - lastGpsBearingTime < 4_000L) return
 
         var azimuthDeg: Float? = null
@@ -262,6 +268,8 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         }
     }
 
+    // ==================== LOCATION, CITY & WEATHER ====================
+
     override fun onLocationChanged(location: Location) {
         handleNewLocation(location)
     }
@@ -272,6 +280,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     override fun onProviderDisabled(provider: String) {}
 
     private fun handleNewLocation(loc: Location) {
+        // Use GPS bearing while riding (> 2 m/s ~ 7.2 km/h)
         if (loc.hasBearing() && loc.hasSpeed() && loc.speed > 2.0f) {
             lastGpsBearingTime = System.currentTimeMillis()
             updateHeading(degreesToCardinal(loc.bearing))
@@ -281,6 +290,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         val lon = loc.longitude
         val now = System.currentTimeMillis()
 
+        // 1. Reverse Geocode City/Area Name (every 2 min or > 500m move)
         val geoDist = FloatArray(1)
         if (lastGeoFetchMs > 0L) {
             Location.distanceBetween(lastGeoLat, lastGeoLon, lat, lon, geoDist)
@@ -293,6 +303,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
             fetchCityName(lat, lon)
         }
 
+        // 2. Fetch Free Weather Temp from Open-Meteo (every 15 min or > 2km move)
         val weatherDist = FloatArray(1)
         if (lastWeatherFetchMs > 0L) {
             Location.distanceBetween(lastWeatherLat, lastWeatherLon, lat, lon, weatherDist)
@@ -366,6 +377,8 @@ object HomeSyncManager : SensorEventListener, LocationListener {
             } catch (_: Exception) {}
         }.start()
     }
+
+    // ==================== SEND TO ESP32 ====================
 
     private fun sendHomePacket(force: Boolean) {
         if (isNavActive) return
