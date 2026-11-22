@@ -17,6 +17,11 @@ class NavNotificationService : NotificationListenerService() {
         private const val MAPS_PACKAGE = "com.google.android.apps.maps"
     }
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        HomeSyncManager.start(applicationContext)
+    }
+    
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null || sbn.packageName != MAPS_PACKAGE) return
         val notification = sbn.notification ?: return
@@ -87,6 +92,8 @@ class NavNotificationService : NotificationListenerService() {
             eta = eta
         )
 
+        HomeSyncManager.setNavigationActive(true)
+
         BleNavManager.sendNavigation(navData)
     }
 
@@ -94,6 +101,7 @@ class NavNotificationService : NotificationListenerService() {
         if (sbn == null || sbn.packageName != MAPS_PACKAGE) return
         if (!sbn.isOngoing) return
         BleNavManager.sendNavigation(NavData(active = false), force = true)
+        HomeSyncManager.setNavigationActive(false)
     }
 
     private fun extractTurnBitmap(notification: Notification, extras: Bundle): Bitmap? {
