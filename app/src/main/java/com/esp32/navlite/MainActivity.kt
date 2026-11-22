@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
@@ -15,7 +16,6 @@ import android.bluetooth.le.ScanSettings
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -23,6 +23,7 @@ import android.os.Looper
 import android.os.ParcelUuid
 import android.provider.Settings
 import android.text.TextUtils
+import android.view.View
 import android.widget.Button
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,12 +43,12 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_LAST_MAC = "last_device_mac"
     }
 
-    private lateinit var tvNotifStatus: TextView
-    private lateinit var tvBleStatus: TextView
-    private lateinit var tvLiveData: TextView
-    private lateinit var btnNotifAccess: Button
-    private lateinit var btnScanConnect: Button
-    private lateinit var btnDisconnect: Button
+    private var tvNotifStatus: TextView? = null
+    private var tvBleStatus: TextView? = null
+    private var tvLiveData: TextView? = null
+    private var btnNotifAccess: Button? = null
+    private var btnScanConnect: Button? = null
+    private var btnDisconnect: Button? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private var bluetoothGatt: BluetoothGatt? = null
@@ -82,61 +83,92 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        tvNotifStatus = findViewById(R.id.tvNotifStatus)
-        tvBleStatus = findViewById(R.id.tvBleStatus)
-        tvLiveData = findViewById(R.id.tvLiveData)
-        btnNotifAccess = findViewById(R.id.btnNotifAccess)
-        btnScanConnect = findViewById(R.id.btnScanConnect)
-        btnDisconnect = findViewById(R.id.btnDisconnect)
+        bindViewsIfPresent()
 
-        BleNavManager.attachMainActivity(this)
+        try {
+            val attachMethod = BleNavManager::class.java.methods.firstOrNull {
+                it.name == "attachMainActivity" && it.parameterCount == 1
+            }
+            attachMethod?.invoke(BleNavManager, this)
+        } catch (_: Exception) {
+        }
+
         HomeSyncManager.start(applicationContext)
 
-        btnNotifAccess.setOnClickListener {
+        btnNotifAccess?.setOnClickListener {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
 
-        btnScanConnect.setOnClickListener {
+        btnScanConnect?.setOnClickListener {
             manualDisconnect = false
             ensureBlePermissionsAndConnect()
         }
 
-        btnDisconnect.setOnClickListener {
+        btnDisconnect?.setOnClickListener {
             manualDisconnect = true
             disconnectGatt()
             updateBleStatus("Disconnected")
         }
 
-        findViewById<Button>(R.id.btnTestLeft)?.setOnClickListener {
-            BleNavManager.sendNavigation(
-                NavData(true, "200 m", "Turn Left", "FC Road", "2 min", "10:15 AM"),
-                force = true
-            )
-        }
-
-        findViewById<Button>(R.id.btnTestRight)?.setOnClickListener {
-            BleNavManager.sendNavigation(
-                NavData(true, "150 m", "Turn Right", "JM Road", "1 min", "10:16 AM"),
-                force = true
-            )
-        }
-
-        findViewById<Button>(R.id.btnTestStraight)?.setOnClickListener {
-            BleNavManager.sendNavigation(
-                NavData(true, "500 m", "Straight", "MG Road", "4 min", "10:18 AM"),
-                force = true
-            )
-        }
-
-        findViewById<Button>(R.id.btnTestUTurn)?.setOnClickListener {
-            BleNavManager.sendNavigation(
-                NavData(true, "80 m", "U-Turn", "Highway", "1 min", "10:19 AM"),
-                force = true
-            )
-        }
+        wireTestButton("btnTestLeft", NavData(true, "200 m", "Turn Left", "FC Road", "2 min", "10:15 AM"))
+        wireTestButton("btnTestRight", NavData(true, "150 m", "Turn Right", "JM Road", "1 min", "10:16 AM"))
+        wireTestButton("btnTestStraight", NavData(true, "500 m", "Straight", "MG Road", "4 min", "10:18 AM"))
+        wireTestButton("btnTestUTurn", NavData(true, "80 m", "U-Turn", "Highway", "1 min", "10:19 AM"))
 
         updateNotificationAccessStatus()
         updateBleStatus(if (isConnected) "Connected to $TARGET_DEVICE_NAME" else "Disconnected")
+    }
+
+    private fun bindViewsIfPresent() {
+        val ids = listOf(
+            "tvNotifStatus",
+            "tvBleStatus",
+            "tvLiveData",
+            "btnNotifAccess",
+            "btnScanConnect",
+            "btnDisconnect"
+        )
+        for (idName in ids) {
+            val resId = resources.getIdentifier(idName, "id", packageName)
+            if (resId == 0) continue
+            val view: View? = findViewById(resId)
+            when (idName) {
+                "tvNotifStatus" -> tvNotifStatus = view as? TextView
+                "tvBleStatus" -> tvBleStatus = view as? TextView
+                "tvLiveData" -> tvLiveData = view as? TextView
+                "btnNotifAccess" -> btnNotifAccess = view as? Button
+                "btnScanConnect" -> btnScanConnect = view as? Button
+                "btnDisconnect" -> btnDisconnect = view as? Button
+            }
+        }
+    }
+
+    private fun wireTestButton(idName: String, sample: NavData) {
+        val resId = resources.getIdentifier(idName, "id", packageName)
+        if (resId == 0) return
+        findViewById<Button>(resId)?.setOnClickListener {
+            BleNavManager.sendNavigation(sample, force = true)
+        }
+    }
+
+    private fun notifyBleManagerConnection(connected: Boolean) {
+        try {
+            val method = BleNavManager::class.java.methods.firstOrNull {
+                it.name == "onConnectionChanged" && it.parameterCount == 1
+            }
+            method?.invoke(BleNavManager, connected)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun notifyBleManagerReady() {
+        try {
+            val method = BleNavManager::class.java.methods.firstOrNull {
+                it.name == "onReadyToSend" && it.parameterCount == 0
+            }
+            method?.invoke(BleNavManager)
+        } catch (_: Exception) {
+        }
     }
 
     override fun onResume() {
@@ -154,17 +186,23 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         stopBleScan()
-        BleNavManager.detachMainActivity(this)
+        try {
+            val detachMethod = BleNavManager::class.java.methods.firstOrNull {
+                it.name == "detachMainActivity" && it.parameterCount == 1
+            }
+            detachMethod?.invoke(BleNavManager, this)
+        } catch (_: Exception) {
+        }
     }
 
     private fun updateNotificationAccessStatus() {
         val enabled = isNotificationServiceEnabled()
         if (enabled) {
-            tvNotifStatus.text = "Notification Access: ENABLED"
-            btnNotifAccess.text = "Notification Access Granted"
+            tvNotifStatus?.text = "Notification Access: ENABLED"
+            btnNotifAccess?.text = "Notification Access Granted"
         } else {
-            tvNotifStatus.text = "Notification Access: DISABLED (Tap below)"
-            btnNotifAccess.text = "Enable Notification Access"
+            tvNotifStatus?.text = "Notification Access: DISABLED (Tap below)"
+            btnNotifAccess?.text = "Enable Notification Access"
         }
     }
 
@@ -312,7 +350,7 @@ class MainActivity : AppCompatActivity() {
         stopBleScan()
         rxCharacteristic = null
         isConnected = false
-        BleNavManager.onConnectionChanged(false)
+        notifyBleManagerConnection(false)
         try {
             bluetoothGatt?.disconnect()
             bluetoothGatt?.close()
@@ -329,13 +367,13 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     updateBleStatus("Connected to $TARGET_DEVICE_NAME")
                 }
-                BleNavManager.onConnectionChanged(true)
+                notifyBleManagerConnection(true)
                 gatt.requestMtu(185)
                 gatt.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 isConnected = false
                 rxCharacteristic = null
-                BleNavManager.onConnectionChanged(false)
+                notifyBleManagerConnection(false)
                 runOnUiThread {
                     updateBleStatus("Disconnected")
                 }
@@ -364,7 +402,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             if (rxCharacteristic != null) {
-                BleNavManager.onReadyToSend()
+                notifyBleManagerReady()
             }
         }
     }
@@ -386,13 +424,13 @@ class MainActivity : AppCompatActivity() {
 
     fun updateBleStatus(status: String) {
         runOnUiThread {
-            tvBleStatus.text = "BLE: $status"
+            tvBleStatus?.text = "BLE: $status"
         }
     }
 
     fun updateLiveDataPreview(nav: NavData) {
         runOnUiThread {
-            tvLiveData.text = if (nav.active) {
+            tvLiveData?.text = if (nav.active) {
                 "DIR: ${nav.directions} | DIST: ${nav.distance}\nTITLE: ${nav.title} | ETA: ${nav.eta}"
             } else {
                 "Navigation Idle (Waiting for Google Maps)"
