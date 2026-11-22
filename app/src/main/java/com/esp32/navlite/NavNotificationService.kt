@@ -36,7 +36,18 @@ class NavNotificationService : NotificationListenerService() {
         val combined = "$rawTitle $rawText $rawBigText".lowercase()
 
         // 1. First check if Maps wrote turn text (English / Marathi / Hindi)
-        val textDirection = when {
+       val textDirection = when {
+            combined.contains("roundabout") || combined.contains("exit") -> when {
+                combined.contains("1st") || combined.contains("first") || combined.contains("1 ला") -> "Roundabout 1"
+                combined.contains("3rd") || combined.contains("third") || combined.contains("3 रा") -> "Roundabout 3"
+                else -> "Roundabout 2"
+            }
+            combined.contains("destination") || combined.contains("arrive") ||
+                combined.contains("reached") || combined.contains("पोहोचला") -> "Destination"
+            combined.contains("keep left") || combined.contains("slight left") ||
+                combined.contains("bear left") -> "Keep Left"
+            combined.contains("keep right") || combined.contains("slight right") ||
+                combined.contains("bear right") -> "Keep Right"
             combined.contains("u-turn") || combined.contains("uturn") ||
                 combined.contains("u turn") || combined.contains("यू-टर्न") -> "U-Turn"
             combined.contains("left") || combined.contains("डावीकडे") ||
