@@ -10,7 +10,6 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.ComponentName
@@ -21,7 +20,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.ParcelUuid
 import android.provider.Settings
 import android.text.TextUtils
 import android.view.View
@@ -65,16 +63,21 @@ class MainActivity : AppCompatActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ ->
+    ) { perms ->
+        val allGranted = perms.values.all { it }
+        if (!allGranted) {
+            updateBleStatus("Permission denied! Allow Bluetooth & Location")
+            return@registerForActivityResult
+        }
         HomeSyncManager.tryStartLocationUpdates()
-        startBleScanOrDirectConnect()
+        startBleScan(clearSavedMac = true)
     }
 
     private val enableBtLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { _ ->
         if (bluetoothAdapter?.isEnabled == true) {
-            startBleScanOrDirectConnect()
+            startBleScan(clearSavedMac = true)
         } else {
             updateBleStatus("Bluetooth is OFF")
         }
@@ -100,14 +103,16 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
 
+        // Manual tap on Scan & Connect always does a fresh scan
         btnScanConnect?.setOnClickListener {
             manualDisconnect = false
-            ensureBlePermissionsAndConnect()
+            disconnectGatt(notifyManager = false)
+            ensureBlePermissionsAndConnect(forceFreshScan = true)
         }
 
         btnDisconnect?.setOnClickListener {
             manualDisconnect = true
-            disconnectGatt()
+            disconnectGatt(notifyManager = true)
             updateBleStatus("Disconnected")
         }
 
@@ -122,12 +127,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindViewsIfPresent() {
         val ids = listOf(
-            "tvNotifStatus",
-            "tvBleStatus",
-            "tvLiveData",
-            "btnNotifAccess",
-            "btnScanConnect",
-            "btnDisconnect"
+            "tvNotifStatus", "tvBleStatus", "tvLiveData",
+            "btnNotifAccess", "btnScanConnect", "btnDisconnect"
         )
         for (idName in ids) {
             val resId = resources.getIdentifier(idName, "id", packageName)
@@ -179,7 +180,7 @@ class MainActivity : AppCompatActivity() {
         if (!isConnected && !manualDisconnect) {
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             if (!prefs.getString(KEY_LAST_MAC, null).isNullOrEmpty()) {
-                ensureBlePermissionsAndConnect()
+                ensureBlePermissionsAndConnect(forceFreshScan = false)
             }
         }
     }
@@ -222,7 +223,7 @@ class MainActivity : AppCompatActivity() {
         return false
     }
 
-    private fun ensureBlePermissionsAndConnect() {
+    private fun ensureBlePermissionsAndConnect(forceFreshScan: Boolean) {
         val required = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
@@ -231,12 +232,7 @@ class MainActivity : AppCompatActivity() {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 required.add(Manifest.permission.BLUETOOTH_CONNECT)
             }
-        } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                required.add(Manifest.permission.ACCESS_FINE_LOCATION)
-            }
         }
-
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             required.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
@@ -246,16 +242,22 @@ class MainActivity : AppCompatActivity() {
 
         val distinctPerms = required.distinct()
         if (distinctPerms.isNotEmpty()) {
+            updateBleStatus("Requesting Bluetooth permissions...")
             permissionLauncher.launch(distinctPerms.toTypedArray())
             return
         }
 
         if (bluetoothAdapter?.isEnabled != true) {
+            updateBleStatus("Turning ON Bluetooth...")
             enableBtLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
             return
         }
 
-        startBleScanOrDirectConnect()
+        if (forceFreshScan) {
+            startBleScan(clearSavedMac = true)
+        } else {
+            startBleScanOrDirectConnect()
+        }
     }
 
     @Suppress("MissingPermission")
@@ -269,39 +271,51 @@ class MainActivity : AppCompatActivity() {
             try {
                 val device = adapter.getRemoteDevice(savedMac)
                 connectToDevice(device)
+                // Fallback to scan if direct MAC connect doesn't succeed in 4 seconds
+                handler.postDelayed({
+                    if (!isConnected && !manualDisconnect && !isScanning) {
+                        startBleScan(clearSavedMac = true)
+                    }
+                }, 4_000L)
                 return
             } catch (_: Exception) {
             }
         }
 
-        startBleScan()
+        startBleScan(clearSavedMac = false)
     }
 
     @Suppress("MissingPermission")
-    private fun startBleScan() {
-        val scanner = bluetoothAdapter?.bluetoothLeScanner ?: return
+    private fun startBleScan(clearSavedMac: Boolean) {
+        val scanner = bluetoothAdapter?.bluetoothLeScanner
+        if (scanner == null) {
+            updateBleStatus("BLE Scanner unavailable (Turn BT ON)")
+            return
+        }
+        if (clearSavedMac) {
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().remove(KEY_LAST_MAC).apply()
+        }
         if (isScanning) return
 
         isScanning = true
         updateBleStatus("Scanning for $TARGET_DEVICE_NAME...")
 
-        val filters = listOf(
-            ScanFilter.Builder().setServiceUuid(ParcelUuid(NUS_SERVICE_UUID)).build()
-        )
+        // Unfiltered scan so ChronosESP32 ("ESP32 Nav") is always detected
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
-        scanner.startScan(filters, settings, scanCallback)
+        scanner.startScan(null, settings, scanCallback)
 
         handler.removeCallbacks(stopScanRunnable)
-        handler.postDelayed(stopScanRunnable, 10_000L)
+        handler.postDelayed(stopScanRunnable, 12_000L)
     }
 
     private val stopScanRunnable = Runnable {
         stopBleScan()
         if (!isConnected) {
-            updateBleStatus("Device not found. Tap Scan & Connect.")
+            updateBleStatus("Not found. Check ESP32 power & Location ON")
         }
     }
 
@@ -320,19 +334,31 @@ class MainActivity : AppCompatActivity() {
         @Suppress("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             val device = result?.device ?: return
-            val name = result.scanRecord?.deviceName ?: device.name ?: ""
-            if (name.equals(TARGET_DEVICE_NAME, ignoreCase = true) ||
-                result.scanRecord?.serviceUuids?.any { it.uuid == NUS_SERVICE_UUID } == true
+            val advName = result.scanRecord?.deviceName ?: ""
+            val devName = try { device.name ?: "" } catch (_: Exception) { "" }
+            val hasNusUuid = result.scanRecord?.serviceUuids?.any { it.uuid == NUS_SERVICE_UUID } == true
+
+            if (advName.contains("ESP32", ignoreCase = true) ||
+                devName.contains("ESP32", ignoreCase = true) ||
+                advName.equals(TARGET_DEVICE_NAME, ignoreCase = true) ||
+                devName.equals(TARGET_DEVICE_NAME, ignoreCase = true) ||
+                hasNusUuid
             ) {
                 stopBleScan()
                 connectToDevice(device)
             }
         }
+
+        override fun onScanFailed(errorCode: Int) {
+            isScanning = false
+            updateBleStatus("Scan failed (code $errorCode). Turn Location ON")
+        }
     }
 
     @Suppress("MissingPermission")
     private fun connectToDevice(device: BluetoothDevice) {
-        updateBleStatus("Connecting to $TARGET_DEVICE_NAME...")
+        val label = try { device.name ?: TARGET_DEVICE_NAME } catch (_: Exception) { TARGET_DEVICE_NAME }
+        updateBleStatus("Connecting to $label...")
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_LAST_MAC, device.address)
@@ -347,11 +373,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     @Suppress("MissingPermission")
-    private fun disconnectGatt() {
+    private fun disconnectGatt(notifyManager: Boolean) {
         stopBleScan()
         rxCharacteristic = null
         isConnected = false
-        notifyBleManagerConnection(false)
+        if (notifyManager) {
+            notifyBleManagerConnection(false)
+        }
         try {
             bluetoothGatt?.disconnect()
             bluetoothGatt?.close()
@@ -376,12 +404,12 @@ class MainActivity : AppCompatActivity() {
                 rxCharacteristic = null
                 notifyBleManagerConnection(false)
                 runOnUiThread {
-                    updateBleStatus("Disconnected")
+                    updateBleStatus("Disconnected (status $status)")
                 }
                 if (!manualDisconnect) {
                     handler.postDelayed({
                         if (!isConnected && !manualDisconnect) {
-                            startBleScanOrDirectConnect()
+                            startBleScan(clearSavedMac = false)
                         }
                     }, 2_000L)
                 }
