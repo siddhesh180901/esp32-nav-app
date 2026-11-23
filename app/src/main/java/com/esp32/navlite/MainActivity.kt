@@ -15,7 +15,6 @@ import android.bluetooth.le.ScanSettings
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -64,13 +63,12 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { perms ->
-        val allGranted = perms.values.all { it }
-        if (!allGranted) {
-            updateBleStatus("Permission denied! Allow Bluetooth & Location")
-            return@registerForActivityResult
+        if (perms.values.all { it }) {
+            HomeSyncManager.tryStartLocationUpdates()
+            startBleScan(clearSavedMac = true)
+        } else {
+            updateBleStatus("Grant Bluetooth & Location permission")
         }
-        HomeSyncManager.tryStartLocationUpdates()
-        startBleScan(clearSavedMac = true)
     }
 
     private val enableBtLauncher = registerForActivityResult(
@@ -103,10 +101,10 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
 
-        // Manual tap on Scan & Connect always does a fresh scan
         btnScanConnect?.setOnClickListener {
             manualDisconnect = false
             disconnectGatt(notifyManager = false)
+            updateBleStatus("Starting BLE scan...")
             ensureBlePermissionsAndConnect(forceFreshScan = true)
         }
 
@@ -125,24 +123,24 @@ class MainActivity : AppCompatActivity() {
         updateBleStatus(if (isConnected) "Connected to $TARGET_DEVICE_NAME" else "Disconnected")
     }
 
-    private fun bindViewsIfPresent() {
-        val ids = listOf(
-            "tvNotifStatus", "tvBleStatus", "tvLiveData",
-            "btnNotifAccess", "btnScanConnect", "btnDisconnect"
-        )
-        for (idName in ids) {
-            val resId = resources.getIdentifier(idName, "id", packageName)
-            if (resId == 0) continue
-            val view: View? = findViewById(resId)
-            when (idName) {
-                "tvNotifStatus" -> tvNotifStatus = view as? TextView
-                "tvBleStatus" -> tvBleStatus = view as? TextView
-                "tvLiveData" -> tvLiveData = view as? TextView
-                "btnNotifAccess" -> btnNotifAccess = view as? Button
-                "btnScanConnect" -> btnScanConnect = view as? Button
-                "btnDisconnect" -> btnDisconnect = view as? Button
+    private fun findViewByAnyId(vararg names: String): View? {
+        for (name in names) {
+            val id = resources.getIdentifier(name, "id", packageName)
+            if (id != 0) {
+                val view = findViewById<View>(id)
+                if (view != null) return view
             }
         }
+        return null
+    }
+
+    private fun bindViewsIfPresent() {
+        tvNotifStatus = findViewByAnyId("tvNotifStatus", "tv_notif_status") as? TextView
+        tvBleStatus = findViewByAnyId("tvBleStatus", "tv_ble_status") as? TextView
+        tvLiveData = findViewByAnyId("tvLiveData", "tv_live_data") as? TextView
+        btnNotifAccess = findViewByAnyId("btnNotifAccess", "btn_notif_access") as? Button
+        btnScanConnect = findViewByAnyId("btnScanConnect", "btn_scan_connect") as? Button
+        btnDisconnect = findViewByAnyId("btnDisconnect", "btn_disconnect") as? Button
     }
 
     private fun wireTestButton(idName: String, sample: NavData) {
@@ -242,13 +240,13 @@ class MainActivity : AppCompatActivity() {
 
         val distinctPerms = required.distinct()
         if (distinctPerms.isNotEmpty()) {
-            updateBleStatus("Requesting Bluetooth permissions...")
+            updateBleStatus("Requesting permissions...")
             permissionLauncher.launch(distinctPerms.toTypedArray())
             return
         }
 
         if (bluetoothAdapter?.isEnabled != true) {
-            updateBleStatus("Turning ON Bluetooth...")
+            updateBleStatus("Turn ON Bluetooth...")
             enableBtLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
             return
         }
@@ -271,12 +269,6 @@ class MainActivity : AppCompatActivity() {
             try {
                 val device = adapter.getRemoteDevice(savedMac)
                 connectToDevice(device)
-                // Fallback to scan if direct MAC connect doesn't succeed in 4 seconds
-                handler.postDelayed({
-                    if (!isConnected && !manualDisconnect && !isScanning) {
-                        startBleScan(clearSavedMac = true)
-                    }
-                }, 4_000L)
                 return
             } catch (_: Exception) {
             }
@@ -289,7 +281,7 @@ class MainActivity : AppCompatActivity() {
     private fun startBleScan(clearSavedMac: Boolean) {
         val scanner = bluetoothAdapter?.bluetoothLeScanner
         if (scanner == null) {
-            updateBleStatus("BLE Scanner unavailable (Turn BT ON)")
+            updateBleStatus("BLE Scanner unavailable")
             return
         }
         if (clearSavedMac) {
@@ -301,7 +293,6 @@ class MainActivity : AppCompatActivity() {
         isScanning = true
         updateBleStatus("Scanning for $TARGET_DEVICE_NAME...")
 
-        // Unfiltered scan so ChronosESP32 ("ESP32 Nav") is always detected
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
@@ -309,13 +300,13 @@ class MainActivity : AppCompatActivity() {
         scanner.startScan(null, settings, scanCallback)
 
         handler.removeCallbacks(stopScanRunnable)
-        handler.postDelayed(stopScanRunnable, 12_000L)
+        handler.postDelayed(stopScanRunnable, 10_000L)
     }
 
     private val stopScanRunnable = Runnable {
         stopBleScan()
         if (!isConnected) {
-            updateBleStatus("Not found. Check ESP32 power & Location ON")
+            updateBleStatus("Device not found. Tap Scan & Connect.")
         }
     }
 
@@ -338,27 +329,21 @@ class MainActivity : AppCompatActivity() {
             val devName = try { device.name ?: "" } catch (_: Exception) { "" }
             val hasNusUuid = result.scanRecord?.serviceUuids?.any { it.uuid == NUS_SERVICE_UUID } == true
 
-            if (advName.contains("ESP32", ignoreCase = true) ||
-                devName.contains("ESP32", ignoreCase = true) ||
-                advName.equals(TARGET_DEVICE_NAME, ignoreCase = true) ||
+            if (advName.equals(TARGET_DEVICE_NAME, ignoreCase = true) ||
                 devName.equals(TARGET_DEVICE_NAME, ignoreCase = true) ||
+                advName.contains("ESP32", ignoreCase = true) ||
+                devName.contains("ESP32", ignoreCase = true) ||
                 hasNusUuid
             ) {
                 stopBleScan()
                 connectToDevice(device)
             }
         }
-
-        override fun onScanFailed(errorCode: Int) {
-            isScanning = false
-            updateBleStatus("Scan failed (code $errorCode). Turn Location ON")
-        }
     }
 
     @Suppress("MissingPermission")
     private fun connectToDevice(device: BluetoothDevice) {
-        val label = try { device.name ?: TARGET_DEVICE_NAME } catch (_: Exception) { TARGET_DEVICE_NAME }
-        updateBleStatus("Connecting to $label...")
+        updateBleStatus("Connecting to $TARGET_DEVICE_NAME...")
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_LAST_MAC, device.address)
@@ -404,12 +389,12 @@ class MainActivity : AppCompatActivity() {
                 rxCharacteristic = null
                 notifyBleManagerConnection(false)
                 runOnUiThread {
-                    updateBleStatus("Disconnected (status $status)")
+                    updateBleStatus("Disconnected")
                 }
                 if (!manualDisconnect) {
                     handler.postDelayed({
                         if (!isConnected && !manualDisconnect) {
-                            startBleScan(clearSavedMac = false)
+                            startBleScanOrDirectConnect()
                         }
                     }, 2_000L)
                 }
