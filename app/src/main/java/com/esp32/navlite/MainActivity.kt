@@ -25,7 +25,6 @@ import android.text.TextUtils
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -64,13 +63,9 @@ class MainActivity : AppCompatActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { perms ->
-        if (perms.values.all { it }) {
-            HomeSyncManager.tryStartLocationUpdates()
-            startBleScan(clearSavedMac = true)
-        } else {
-            updateBleStatus("Grant Bluetooth & Location permission")
-        }
+    ) { _ ->
+        HomeSyncManager.tryStartLocationUpdates()
+        startBleScan(clearSavedMac = true)
     }
 
     private val enableBtLauncher = registerForActivityResult(
@@ -87,16 +82,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        bindViewsIfPresent()
-
-        try {
-            val attachMethod = BleNavManager::class.java.methods.firstOrNull {
-                it.name == "attachMainActivity" && it.parameterCount == 1
-            }
-            attachMethod?.invoke(BleNavManager, this)
-        } catch (_: Exception) {
-        }
-
+        bindViews()
+        BleNavManager.attachMainActivity(this)
         HomeSyncManager.start(applicationContext)
 
         btnNotifAccess?.setOnClickListener {
@@ -104,16 +91,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnScanConnect?.setOnClickListener {
-            Toast.makeText(this, "Scanning for $TARGET_DEVICE_NAME...", Toast.LENGTH_SHORT).show()
             manualDisconnect = false
-            disconnectGatt(notifyManager = false)
-            updateBleStatus("Starting BLE scan...")
+            disconnectGatt()
             ensureBlePermissionsAndConnect(forceFreshScan = true)
         }
 
         btnDisconnect?.setOnClickListener {
             manualDisconnect = true
-            disconnectGatt(notifyManager = true)
+            disconnectGatt()
             updateBleStatus("Disconnected")
         }
 
@@ -137,7 +122,7 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
-    private fun bindViewsIfPresent() {
+    private fun bindViews() {
         tvNotifStatus = findViewByAnyId("tvNotifStatus", "tv_notif_status") as? TextView
         tvBleStatus = findViewByAnyId("tvBleStatus", "tv_ble_status") as? TextView
         tvLiveData = findViewByAnyId("tvLiveData", "tv_live_data") as? TextView
@@ -151,26 +136,6 @@ class MainActivity : AppCompatActivity() {
         if (resId == 0) return
         findViewById<Button>(resId)?.setOnClickListener {
             BleNavManager.sendNavigation(sample, force = true)
-        }
-    }
-
-    private fun notifyBleManagerConnection(connected: Boolean) {
-        try {
-            val method = BleNavManager::class.java.methods.firstOrNull {
-                it.name == "onConnectionChanged" && it.parameterCount == 1
-            }
-            method?.invoke(BleNavManager, connected)
-        } catch (_: Exception) {
-        }
-    }
-
-    private fun notifyBleManagerReady() {
-        try {
-            val method = BleNavManager::class.java.methods.firstOrNull {
-                it.name == "onReadyToSend" && it.parameterCount == 0
-            }
-            method?.invoke(BleNavManager)
-        } catch (_: Exception) {
         }
     }
 
@@ -189,13 +154,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         stopBleScan()
-        try {
-            val detachMethod = BleNavManager::class.java.methods.firstOrNull {
-                it.name == "detachMainActivity" && it.parameterCount == 1
-            }
-            detachMethod?.invoke(BleNavManager, this)
-        } catch (_: Exception) {
-        }
+        BleNavManager.detachMainActivity(this)
     }
 
     private fun updateNotificationAccessStatus() {
@@ -243,13 +202,11 @@ class MainActivity : AppCompatActivity() {
 
         val distinctPerms = required.distinct()
         if (distinctPerms.isNotEmpty()) {
-            updateBleStatus("Requesting permissions...")
             permissionLauncher.launch(distinctPerms.toTypedArray())
             return
         }
 
         if (bluetoothAdapter?.isEnabled != true) {
-            updateBleStatus("Turn ON Bluetooth...")
             enableBtLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
             return
         }
@@ -282,11 +239,7 @@ class MainActivity : AppCompatActivity() {
 
     @Suppress("MissingPermission")
     private fun startBleScan(clearSavedMac: Boolean) {
-        val scanner = bluetoothAdapter?.bluetoothLeScanner
-        if (scanner == null) {
-            updateBleStatus("BLE Scanner unavailable")
-            return
-        }
+        val scanner = bluetoothAdapter?.bluetoothLeScanner ?: return
         if (clearSavedMac) {
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().remove(KEY_LAST_MAC).apply()
@@ -361,13 +314,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     @Suppress("MissingPermission")
-    private fun disconnectGatt(notifyManager: Boolean) {
+    private fun disconnectGatt() {
         stopBleScan()
         rxCharacteristic = null
         isConnected = false
-        if (notifyManager) {
-            notifyBleManagerConnection(false)
-        }
+        BleNavManager.onConnectionChanged(false)
         try {
             bluetoothGatt?.disconnect()
             bluetoothGatt?.close()
@@ -384,13 +335,13 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     updateBleStatus("Connected to $TARGET_DEVICE_NAME")
                 }
-                notifyBleManagerConnection(true)
+                BleNavManager.onConnectionChanged(true)
                 gatt.requestMtu(185)
                 gatt.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 isConnected = false
                 rxCharacteristic = null
-                notifyBleManagerConnection(false)
+                BleNavManager.onConnectionChanged(false)
                 runOnUiThread {
                     updateBleStatus("Disconnected")
                 }
@@ -419,7 +370,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             if (rxCharacteristic != null) {
-                notifyBleManagerReady()
+                BleNavManager.onReadyToSend()
             }
         }
     }
