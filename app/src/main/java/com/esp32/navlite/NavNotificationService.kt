@@ -21,13 +21,7 @@ class NavNotificationService : NotificationListenerService() {
         super.onListenerConnected()
         HomeSyncManager.start(applicationContext)
     }
-    
-    override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        if (sbn == null || sbn.packageName != MAPS_PACKAGE) return
-        val notification = sbn.notification ?: return
-        val extras = notification.extras ?: return
-        
-private fun cleanSpaces(s: String?): String {
+    private fun cleanSpaces(s: String?): String {
         return s.orEmpty()
             .replace('\u00A0', ' ')
             .replace('\u202F', ' ')
@@ -36,6 +30,11 @@ private fun cleanSpaces(s: String?): String {
             .replace(Regex("\\s+"), " ")
             .trim()
     }
+    
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        if (sbn == null || sbn.packageName != MAPS_PACKAGE) return
+        val notification = sbn.notification ?: return
+        val extras = notification.extras ?: return
         
 
  val rawTitle = cleanSpaces(extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
