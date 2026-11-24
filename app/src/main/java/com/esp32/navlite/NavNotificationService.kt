@@ -15,12 +15,37 @@ class NavNotificationService : NotificationListenerService() {
 
     companion object {
         private const val MAPS_PACKAGE = "com.google.android.apps.maps"
+
+        private val CALL_PACKAGES = setOf(
+            "com.google.android.dialer",
+            "com.android.dialer",
+            "com.android.incallui",
+            "com.android.server.telecom",
+            "com.samsung.android.incallui",
+            "com.samsung.android.dialer",
+            "com.oneplus.dialer",
+            "com.miui.phone",
+            "com.truecaller"
+        )
+
+        private val MSG_APP_LABELS = mapOf(
+            "com.whatsapp" to "WhatsApp",
+            "com.whatsapp.w4b" to "WA Biz",
+            "com.google.android.apps.messaging" to "SMS",
+            "com.android.mms" to "SMS",
+            "com.samsung.android.messaging" to "SMS",
+            "com.oneplus.mms" to "SMS",
+            "com.coloros.mms" to "SMS",
+            "com.miui.mms" to "SMS",
+            "org.telegram.messenger" to "Telegram",
+            "org.telegram.messenger.web" to "Telegram"
+        )
     }
 
-    override fun onListenerConnected() {
-        super.onListenerConnected()
-        HomeSyncManager.start(applicationContext)
-    }
+    private var activeCallKey: String? = null
+    private var lastMsgKey: String = ""
+    private var lastMsgTimeMs: Long = 0L
+
     private fun cleanSpaces(s: String?): String {
         return s.orEmpty()
             .replace('\u00A0', ' ')
@@ -30,40 +55,225 @@ class NavNotificationService : NotificationListenerService() {
             .replace(Regex("\\s+"), " ")
             .trim()
     }
-    
+
+    private fun toOledAscii(s: String, fallback: String): String {
+        val sb = StringBuilder()
+        for (ch in s) {
+            if (ch.code in 32..126) sb.append(ch)
+        }
+        val clean = sb.toString().replace(Regex("\\s+"), " ").trim()
+        return if (clean.isNotEmpty()) clean else fallback
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        HomeSyncManager.start(applicationContext)
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        if (sbn == null || sbn.packageName != MAPS_PACKAGE) return
+        if (sbn == null) return
+        val pkg = sbn.packageName ?: return
         val notification = sbn.notification ?: return
         val extras = notification.extras ?: return
-        
 
- val rawTitle = cleanSpaces(extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        // 1. Google Maps Turn-by-Turn Navigation
+        if (pkg == MAPS_PACKAGE) {
+            handleMapsNotification(sbn, notification, extras)
+            return
+        }
+
+        // 2. Incoming Call Alert (Phone Dialer / Truecaller / WhatsApp Call)
+        if (handleCallNotification(sbn, pkg, notification, extras)) {
+            return
+        }
+
+        // 3. Incoming Message Alert (WhatsApp / SMS / Telegram)
+        handleMessageNotification(sbn, pkg, notification, extras)
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        if (sbn == null) return
+        val pkg = sbn.packageName ?: return
+
+        if (pkg == MAPS_PACKAGE) {
+            if (!sbn.isOngoing) return
+            BleNavManager.sendNavigation(NavData(active = false), force = true)
+            HomeSyncManager.setNavigationActive(false)
+            return
+        }
+
+        // Call cut / uchllyavar OLED varun call popup lagech band kar
+        if (activeCallKey != null && (sbn.key == activeCallKey || pkg in CALL_PACKAGES || sbn.notification?.category == Notification.CATEGORY_CALL)) {
+            activeCallKey = null
+            BleNavManager.sendNavigation(
+                NavData(active = true, directions = "#CALL_END#"),
+                force = true
+            )
+        }
+    }
+
+    private fun handleCallNotification(
+        sbn: StatusBarNotification,
+        pkg: String,
+        notification: Notification,
+        extras: Bundle
+    ): Boolean {
+        val rawTitle = cleanSpaces(extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        val rawText = cleanSpaces(extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+        val combined = "$rawTitle $rawText".lowercase()
+
+        val hasAnswerAction = notification.actions?.any { act ->
+            val t = act.title?.toString()?.lowercase().orEmpty()
+            t.contains("answer") || t.contains("accept") || t.contains("decline")
+        } == true
+
+        val isCallCategory = notification.category == Notification.CATEGORY_CALL
+        val isIncomingText = combined.contains("incoming") ||
+            combined.contains("ringing") ||
+            combined.contains("voice call") ||
+            combined.contains("video call")
+
+        val isCallRelated = isCallCategory || hasAnswerAction || (pkg in CALL_PACKAGES)
+        if (!isCallRelated) return false
+
+        // Call uchalla gela (ongoing timer) ki popup band kar
+        val isOngoingActiveCall = combined.contains("ongoing") ||
+            combined.contains("on hold") ||
+            combined.contains("dialing") ||
+            combined.contains("missed call") ||
+            Regex("\\b\\d{1,2}:\\d{2}\\b").containsMatchIn(rawText)
+
+        if (isOngoingActiveCall && !hasAnswerAction) {
+            if (activeCallKey != null) {
+                activeCallKey = null
+                BleNavManager.sendNavigation(
+                    NavData(active = true, directions = "#CALL_END#"),
+                    force = true
+                )
+            }
+            return true
+        }
+
+        if (!hasAnswerAction && !isIncomingText && !isCallCategory) return true
+
+        val callerRaw = if (rawTitle.isNotEmpty() && !rawTitle.equals("Phone", true) && !rawTitle.equals("WhatsApp", true)) {
+            rawTitle
+        } else {
+            rawText
+        }
+        val callerName = toOledAscii(callerRaw, "Unknown").take(18)
+        val callLabel = if (pkg.contains("whatsapp")) "WHATSAPP CALL" else "INCOMING CALL"
+
+        activeCallKey = sbn.key
+        BleNavManager.sendNavigation(
+            NavData(
+                active = true,
+                distance = callLabel,
+                directions = "#CALL#",
+                title = callerName,
+                duration = "",
+                eta = ""
+            ),
+            force = true
+        )
+        return true
+    }
+
+    private fun handleMessageNotification(
+        sbn: StatusBarNotification,
+        pkg: String,
+        notification: Notification,
+        extras: Bundle
+    ) {
+        if (sbn.isOngoing) return
+        if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
+
+        val appLabel = MSG_APP_LABELS[pkg]
+            ?: if (notification.category == Notification.CATEGORY_MESSAGE) "Message" else return
+
+        val rawTitle = cleanSpaces(extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        val rawText = cleanSpaces(extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+        if (rawTitle.isEmpty()) return
+
+        val lowerTitle = rawTitle.lowercase()
+        val lowerText = rawText.lowercase()
+
+        // WhatsApp / SMS chya faltu background notices ignore kar
+        if (lowerTitle == "whatsapp" ||
+            lowerTitle == "messages" ||
+            lowerTitle.contains("checking for") ||
+            lowerTitle.contains("backing up") ||
+            lowerText.contains("checking for new") ||
+            lowerText.contains("whatsapp web") ||
+            lowerText.contains("new messages") ||
+            lowerText.contains("messages from")
+        ) return
+
+        // Group count kadh (uda. "Friends (3 messages)" -> "Friends")
+        val cleanedTitle = rawTitle
+            .replace(Regex("\\s*\\(\\d+\\s+messages?\\)", RegexOption.IGNORE_CASE), "")
+            .trim()
+
+        val senderName = toOledAscii(cleanedTitle, "New Msg").take(18)
+        val dedupKey = "$appLabel|$senderName|$rawText"
+        val now = System.currentTimeMillis()
+        if (dedupKey == lastMsgKey && (now - lastMsgTimeMs) < 4_000L) return
+        lastMsgKey = dedupKey
+        lastMsgTimeMs = now
+
+        BleNavManager.sendNavigation(
+            NavData(
+                active = true,
+                distance = appLabel,
+                directions = "#MSG#",
+                title = senderName,
+                duration = "",
+                eta = ""
+            ),
+            force = true
+        )
+    }
+
+    private fun handleMapsNotification(
+        sbn: StatusBarNotification,
+        notification: Notification,
+        extras: Bundle
+    ) {
+        if (!sbn.isOngoing) return
+
+        val rawTitle = cleanSpaces(extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
         val rawText = cleanSpaces(extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
         val rawBigText = cleanSpaces(extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString())
         val rawSubText = cleanSpaces(extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString())
-        
-        val turnBitmap = extractTurnBitmap(notification, extras)
-
-        if (!sbn.isOngoing && turnBitmap == null) return
-        if (rawTitle.isEmpty() && rawText.isEmpty() && turnBitmap == null) return
 
         val combined = "$rawTitle $rawText $rawBigText".lowercase()
 
-        // 1. Check Maps text first (Roundabout, Destination, Keep L/R, U-Turn, Turn L/R)
+        if (combined.contains("location sharing") ||
+            combined.contains("sharing your") ||
+            combined.contains("offline map") ||
+            combined.contains("downloading") ||
+            combined.contains("timeline") ||
+            combined.contains("using your location") ||
+            combined.contains("commute")
+        ) return
+
+        val turnBitmap = extractTurnBitmap(notification, extras)
+        val distanceRegex = Regex("\\b\\d+(\\.\\d+)?\\s?(m|km|ft|mi|मी|किमी)\\b", RegexOption.IGNORE_CASE)
+        val distanceMatch = distanceRegex.find(rawTitle) ?: distanceRegex.find(rawText)
+
+        val isNavCategory = notification.category == Notification.CATEGORY_NAVIGATION
+        val hasExitAction = notification.actions?.any {
+            it.title?.toString()?.contains("exit", ignoreCase = true) == true
+        } == true
+        val hasEtaSubText = rawSubText.contains("min", true) ||
+            rawSubText.contains("hr", true) ||
+            rawSubText.contains("·") ||
+            rawSubText.contains("•")
+
+        if (!isNavCategory && !hasExitAction && distanceMatch == null && !hasEtaSubText) return
+        if (rawTitle.isEmpty() && rawText.isEmpty() && turnBitmap == null) return
+
         val textDirection = when {
-            combined.contains("roundabout") || combined.contains("exit") -> when {
-                combined.contains("1st") || combined.contains("first") || combined.contains("1 ला") -> "Roundabout 1"
-                combined.contains("3rd") || combined.contains("third") || combined.contains("3 रा") -> "Roundabout 3"
-                else -> "Roundabout 2"
-            }
-            combined.contains("destination") || combined.contains("arrive") ||
-                combined.contains("reached") || combined.contains("पोहोचला") -> "Destination"
-            combined.contains("keep left") || combined.contains("slight left") ||
-                combined.contains("stay left") || combined.contains("bear left") ||
-                combined.contains("fork left") || combined.contains("डावीकडे राहा") -> "Keep Left"
-            combined.contains("keep right") || combined.contains("slight right") ||
-                combined.contains("stay right") || combined.contains("bear right") ||
-                combined.contains("fork right") || combined.contains("उजवीकडे राहा") -> "Keep Right"
             combined.contains("u-turn") || combined.contains("uturn") ||
                 combined.contains("u turn") || combined.contains("यू-टर्न") -> "U-Turn"
             combined.contains("left") || combined.contains("डावीकडे") ||
@@ -73,15 +283,11 @@ class NavNotificationService : NotificationListenerService() {
             else -> null
         }
 
-        // 2. If text has no direction, analyze the side arrow icon shape
         val directionLabel = textDirection
             ?: turnBitmap?.let { detectDirectionFromBitmap(it) }
             ?: "Straight"
 
-        val distanceRegex = Regex("\\b\\d+(\\.\\d+)?\\s?(m|km|ft|mi|मी|किमी)\\b", RegexOption.IGNORE_CASE)
-        val distanceMatch = distanceRegex.find(rawTitle) ?: distanceRegex.find(rawText)
         val distance = distanceMatch?.value ?: rawTitle.take(12)
-
         val streetTitle = if (rawText.isNotEmpty()) rawText else rawTitle
 
         val parts = rawSubText.split("·", "•", "-")
@@ -103,15 +309,7 @@ class NavNotificationService : NotificationListenerService() {
         )
 
         HomeSyncManager.setNavigationActive(true)
-
         BleNavManager.sendNavigation(navData)
-    }
-
-    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        if (sbn == null || sbn.packageName != MAPS_PACKAGE) return
-        if (!sbn.isOngoing) return
-        BleNavManager.sendNavigation(NavData(active = false), force = true)
-        HomeSyncManager.setNavigationActive(false)
     }
 
     private fun extractTurnBitmap(notification: Notification, extras: Bundle): Bitmap? {
@@ -156,13 +354,6 @@ class NavNotificationService : NotificationListenerService() {
         return bmp
     }
 
-    /**
-     * Distinguishes:
-     * - U-Turn (two bottom legs + top arch)
-     * - Keep Left / Keep Right (45° diagonal pointing into top corner, no full horizontal bar)
-     * - Turn Left / Turn Right (90° bend with horizontal arm + empty top corner)
-     * - Straight
-     */
     private fun detectDirectionFromBitmap(bmp: Bitmap): String {
         val size = 48
         val pixels = IntArray(size * size)
@@ -191,14 +382,15 @@ class NavNotificationService : NotificationListenerService() {
                     if (lum < minLum) minLum = lum
                 }
             }
-            val filterDimmed = (maxLum > 200.0 && (maxLum - minLum) > 55.0)
+            val filterDimmed = (maxLum > 200.0 && (maxLum - minLum) > 60.0)
             for (y in 0 until size) {
                 for (x in 0 until size) {
                     val p = pixels[y * size + x]
-                    if (Color.alpha(p) >= 165) {
+                    val a = Color.alpha(p)
+                    if (a >= 165) {
                         if (filterDimmed) {
                             val lum = 0.299 * Color.red(p) + 0.587 * Color.green(p) + 0.114 * Color.blue(p)
-                            fg[y][x] = lum >= maxLum * 0.74
+                            fg[y][x] = lum >= maxLum * 0.72
                         } else {
                             fg[y][x] = true
                         }
@@ -215,7 +407,7 @@ class NavNotificationService : NotificationListenerService() {
                 if (d > maxDist) maxDist = d
             }
             if (maxDist < 60.0) return "Straight"
-            val thresh = maxDist * 0.62
+            val thresh = maxDist * 0.55
             for (y in 0 until size) {
                 for (x in 0 until size) {
                     fg[y][x] = dists[y * size + x] >= thresh
@@ -223,7 +415,6 @@ class NavNotificationService : NotificationListenerService() {
             }
         }
 
-        // Tight bounding box
         var minX = size
         var maxX = -1
         var minY = size
@@ -245,7 +436,6 @@ class NavNotificationService : NotificationListenerService() {
         val h = maxY - minY + 1
         if (count < 15 || w < 5 || h < 5) return "Straight"
 
-        // 1. Check U-Turn
         var twoLegRows = 0
         val yStart = minY + (h * 0.65).toInt()
         val yEnd = minY + (h * 0.88).toInt()
@@ -259,8 +449,12 @@ class NavNotificationService : NotificationListenerService() {
             for (x in minX..maxX) {
                 if (fg[y][x]) {
                     if (!inRun) {
-                        inRun = true
-                        if (runs == 0 || gapLen >= 2) runLen = 1
+                        if (runs == 0 || gapLen >= 2) {
+                            inRun = true
+                            runLen = 1
+                        } else {
+                            inRun = true
+                        }
                     } else {
                         runLen++
                     }
@@ -289,7 +483,6 @@ class NavNotificationService : NotificationListenerService() {
             return "U-Turn"
         }
 
-        // 2. Horizontal shift between top half and bottom stem
         var sumXTop = 0.0
         var cntTop = 0
         var sumXBottom = 0.0
@@ -319,73 +512,8 @@ class NavNotificationService : NotificationListenerService() {
         val cxBottom = if (cntBottom > 0) sumXBottom / cntBottom else 0.5
         val shift = cxTop - cxBottom
 
-        // 3. Features to separate 90° Turn vs 45° Keep/Slight arrow:
-        //    - Turn L/R has a horizontal bar spanning ~90-100% width and an empty top corner
-        //    - Keep L/R points diagonally into the top corner (filled top corner, maxRun < 80%)
-        var maxRun = 0
-        for (y in minY..maxY) {
-            var cur = 0
-            for (x in minX..maxX) {
-                if (fg[y][x]) {
-                    cur++
-                    if (cur > maxRun) maxRun = cur
-                } else {
-                    cur = 0
-                }
-            }
-        }
-        val maxRunRatio = maxRun.toDouble() / w.coerceAtLeast(1)
-
-        val cw = (w * 0.22).toInt().coerceAtLeast(2).coerceAtMost(w)
-        val ch = (h * 0.22).toInt().coerceAtLeast(2).coerceAtMost(h)
-        var tlCount = 0
-        var trCount = 0
-        for (y in minY until (minY + ch)) {
-            for (x in minX until (minX + cw)) {
-                if (fg[y][x]) tlCount++
-            }
-            for (x in (maxX - cw + 1)..maxX) {
-                if (fg[y][x]) trCount++
-            }
-        }
-        val cornerArea = (cw * ch).toDouble().coerceAtLeast(1.0)
-        val tlFill = tlCount / cornerArea
-        val trFill = trCount / cornerArea
-
-        var sumYAtLeft = 0.0
-        var cntAtLeft = 0
-        var sumYAtRight = 0.0
-        var cntAtRight = 0
-        val leftEdgeMax = minOf(maxX, minX + 1)
-        val rightEdgeMin = maxOf(minX, maxX - 1)
-        for (y in minY..maxY) {
-            val ny = (y - minY).toDouble() / (h - 1).coerceAtLeast(1)
-            for (x in minX..leftEdgeMax) {
-                if (fg[y][x]) {
-                    sumYAtLeft += ny
-                    cntAtLeft++
-                }
-            }
-            for (x in rightEdgeMin..maxX) {
-                if (fg[y][x]) {
-                    sumYAtRight += ny
-                    cntAtRight++
-                }
-            }
-        }
-        val nyAtLeft = if (cntAtLeft > 0) sumYAtLeft / cntAtLeft else 0.5
-        val nyAtRight = if (cntAtRight > 0) sumYAtRight / cntAtRight else 0.5
-
-        if (shift < -0.09) {
-            val isKeepLeft = (tlFill >= 0.25 && maxRunRatio < 0.82) ||
-                (nyAtLeft < 0.16 && maxRunRatio < 0.85)
-            return if (isKeepLeft) "Keep Left" else "Turn Left"
-        }
-        if (shift > 0.09) {
-            val isKeepRight = (trFill >= 0.25 && maxRunRatio < 0.82) ||
-                (nyAtRight < 0.16 && maxRunRatio < 0.85)
-            return if (isKeepRight) "Keep Right" else "Turn Right"
-        }
+        if (shift < -0.09) return "Turn Left"
+        if (shift > 0.09) return "Turn Right"
 
         val totalSide = (leftMass + rightMass).coerceAtLeast(1)
         val sideBias = (rightMass - leftMass).toDouble() / totalSide
