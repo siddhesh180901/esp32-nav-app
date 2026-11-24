@@ -441,9 +441,13 @@ class NavNotificationService : NotificationListenerService() {
             .filter { it.isNotEmpty() }
 
         val duration = parts.getOrNull(0) ?: ""
-        val eta = parts.lastOrNull {
+       val rawEta = parts.lastOrNull {
             it.contains(":") || it.contains("AM", true) || it.contains("PM", true)
         } ?: parts.getOrNull(1) ?: rawSubText.take(16)
+
+        val timeMatch = Regex("\\b\\d{1,2}:\\d{2}(\\s?[APap][Mm])?\\b").find(rawEta)
+        val eta = timeMatch?.value?.trim()
+            ?: rawEta.replace(Regex("(?i)\\b(arrive|arriving|eta|at)\\b"), "").trim().take(12)
 
         val navData = NavData(
             active = true,
