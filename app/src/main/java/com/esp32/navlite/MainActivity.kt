@@ -96,6 +96,7 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener {
         BleNavManager.setListener(this)
         updateNotificationAccessStatus()
         HomeSyncManager.start(applicationContext)
+        BleNavManager.ensureAutoReconnect(applicationContext)
     }
 
     override fun onDestroy() {
