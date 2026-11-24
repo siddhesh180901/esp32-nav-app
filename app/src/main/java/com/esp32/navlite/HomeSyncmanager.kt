@@ -44,7 +44,6 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     private var sensorManager: SensorManager? = null
     private var locationManager: LocationManager? = null
 
-    // Compass smoothing state
     private var lastAccel: FloatArray? = null
     private var lastMag: FloatArray? = null
     private var smoothSin = 0.0
@@ -52,14 +51,15 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     private var hasSmoothInit = false
     private var lastGpsBearingTime = 0L
 
-    // Live Home Screen fields
     private var currentTime = "--:--"
     private var currentBattery = "--"
     private var currentTemp = "--"
     private var currentCity = "Loc..."
+    private var currentWeather = ""
+    private var currentSpeedKmh = 0
+    private var lastSpeedUpdateMs = 0L
     private var currentHeading = "N"
 
-    // Throttling state
     private var lastSentPayload = ""
     private var lastSendMs = 0L
     private var lastWeatherFetchMs = 0L
@@ -73,16 +73,24 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         override fun run() {
             refreshTimeAndBattery()
             tryStartLocationUpdates()
+            val now = System.currentTimeMillis()
+            // Bike thambali aslyas 8 sec nantar speed 0 kar
+            if (currentSpeedKmh > 0 && (now - lastSpeedUpdateMs) > 8_000L) {
+                currentSpeedKmh = 0
+            }
+            val elapsed = now - lastSendMs
             if (!isNavActive) {
-                val elapsed = System.currentTimeMillis() - lastSendMs
                 sendHomePacket(force = elapsed >= 10_000L)
+            } else if (elapsed >= 15_000L) {
+                sendHomePacket(force = true)
             }
             mainHandler.postDelayed(this, 5_000L)
         }
     }
 
     fun start(context: Context) {
-        appContext = context.applicationContext
+        val ctx = context.applicationContext
+        appContext = ctx
         refreshTimeAndBattery()
         tryStartLocationUpdates()
 
@@ -92,22 +100,22 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         }
         started = true
 
-        // 1. Start Compass Sensors (Rotation Vector with Accel+Mag fallback)
-        val sm = appContext?.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         sensorManager = sm
-        val rotSensor = sm?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        if (rotSensor != null) {
-            sm.registerListener(this, rotSensor, SensorManager.SENSOR_DELAY_UI)
-        } else {
-            val acc = sm?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-            val mag = sm?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
-            if (acc != null && mag != null) {
-                sm.registerListener(this, acc, SensorManager.SENSOR_DELAY_UI)
-                sm.registerListener(this, mag, SensorManager.SENSOR_DELAY_UI)
+        if (sm != null) {
+            val rotSensor = sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+            if (rotSensor != null) {
+                sm.registerListener(this, rotSensor, SensorManager.SENSOR_DELAY_UI)
+            } else {
+                val acc = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+                val mag = sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+                if (acc != null && mag != null) {
+                    sm.registerListener(this, acc, SensorManager.SENSOR_DELAY_UI)
+                    sm.registerListener(this, mag, SensorManager.SENSOR_DELAY_UI)
+                }
             }
         }
 
-        // 2. Start Periodic Sync Ticker
         mainHandler.removeCallbacks(periodicSync)
         mainHandler.post(periodicSync)
     }
@@ -115,7 +123,6 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     fun setNavigationActive(active: Boolean) {
         isNavActive = active
         if (!active) {
-            // Wait 600ms after Nav-Stop packet so BLE GATT finishes cleanly
             mainHandler.postDelayed({
                 if (!isNavActive) {
                     refreshTimeAndBattery()
@@ -153,10 +160,11 @@ object HomeSyncManager : SensorEventListener, LocationListener {
 
             try {
                 if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    // Live speed sathi 2 sec / 3 meter interval
                     lm.requestLocationUpdates(
                         LocationManager.GPS_PROVIDER,
-                        5_000L,
-                        15f,
+                        2_000L,
+                        3f,
                         this,
                         Looper.getMainLooper()
                     )
@@ -206,10 +214,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         }
     }
 
-    // ==================== LIVE COMPASS ====================
-
     override fun onSensorChanged(event: SensorEvent) {
-        // When riding > 7 km/h, prefer true GPS travel heading over magnetic sensor
         if (System.currentTimeMillis() - lastGpsBearingTime < 4_000L) return
 
         var azimuthDeg: Float? = null
@@ -268,8 +273,6 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         }
     }
 
-    // ==================== LOCATION, CITY & WEATHER ====================
-
     override fun onLocationChanged(location: Location) {
         handleNewLocation(location)
     }
@@ -280,17 +283,27 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     override fun onProviderDisabled(provider: String) {}
 
     private fun handleNewLocation(loc: Location) {
-        // Use GPS bearing while riding (> 2 m/s ~ 7.2 km/h)
+        val now = System.currentTimeMillis()
+
+        // Live GPS Speed (3 km/h peksha kami asel tar drift talnyasathi 0 thev)
+        val rawKmh = if (loc.hasSpeed()) (loc.speed * 3.6f).roundToInt() else 0
+        val cleanKmh = if (rawKmh >= 3) rawKmh else 0
+        lastSpeedUpdateMs = now
+        val speedChanged = (cleanKmh != currentSpeedKmh)
+        currentSpeedKmh = cleanKmh
+
         if (loc.hasBearing() && loc.hasSpeed() && loc.speed > 2.0f) {
-            lastGpsBearingTime = System.currentTimeMillis()
+            lastGpsBearingTime = now
             updateHeading(degreesToCardinal(loc.bearing))
+        }
+
+        if (speedChanged && !isNavActive && (now - lastSendMs) >= 1_000L) {
+            sendHomePacket(force = true)
         }
 
         val lat = loc.latitude
         val lon = loc.longitude
-        val now = System.currentTimeMillis()
 
-        // 1. Reverse Geocode City/Area Name (every 2 min or > 500m move)
         val geoDist = FloatArray(1)
         if (lastGeoFetchMs > 0L) {
             Location.distanceBetween(lastGeoLat, lastGeoLon, lat, lon, geoDist)
@@ -303,7 +316,6 @@ object HomeSyncManager : SensorEventListener, LocationListener {
             fetchCityName(lat, lon)
         }
 
-        // 2. Fetch Free Weather Temp from Open-Meteo (every 15 min or > 2km move)
         val weatherDist = FloatArray(1)
         if (lastWeatherFetchMs > 0L) {
             Location.distanceBetween(lastWeatherLat, lastWeatherLon, lat, lon, weatherDist)
@@ -351,10 +363,23 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         }.start()
     }
 
+    private fun weatherCodeToLabel(code: Int, isDay: Int): String {
+        return when (code) {
+            0 -> if (isDay == 1) "Sunny" else "Clear"
+            1, 2 -> "Cloudy"
+            3 -> "Overcast"
+            45, 48 -> "Foggy"
+            51, 53, 55, 56, 57 -> "Drizzle"
+            61, 63, 65, 66, 67, 80, 81, 82 -> "Rain!"
+            95, 96, 99 -> "Storm!"
+            else -> ""
+        }
+    }
+
     private fun fetchWeatherTemp(lat: Double, lon: Double) {
         Thread {
             try {
-                val urlStr = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m"
+                val urlStr = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,weather_code,is_day"
                 val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 8_000
@@ -362,14 +387,15 @@ object HomeSyncManager : SensorEventListener, LocationListener {
                 }
                 if (conn.responseCode == 200) {
                     val body = conn.inputStream.bufferedReader().use { it.readText() }
-                    val temp = JSONObject(body)
-                        .getJSONObject("current")
-                        .getDouble("temperature_2m")
-                        .roundToInt()
-                        .toString()
+                    val cur = JSONObject(body).getJSONObject("current")
+                    val temp = cur.getDouble("temperature_2m").roundToInt().toString()
+                    val code = cur.optInt("weather_code", -1)
+                    val isDay = cur.optInt("is_day", 1)
+                    val label = weatherCodeToLabel(code, isDay)
 
                     mainHandler.post {
                         currentTemp = temp
+                        currentWeather = label
                         if (!isNavActive) sendHomePacket(force = true)
                     }
                 }
@@ -378,11 +404,8 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         }.start()
     }
 
-    // ==================== SEND TO ESP32 ====================
-
     private fun sendHomePacket(force: Boolean) {
-        if (isNavActive) return
-        val meta = "$currentBattery|$currentTemp|$currentCity"
+        val meta = "$currentBattery|$currentTemp|$currentCity|$currentWeather|$currentSpeedKmh"
         val payload = "$currentTime|$meta|$currentHeading"
         if (!force && payload == lastSentPayload) return
 
@@ -399,9 +422,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         )
 
         mainHandler.post {
-            if (!isNavActive) {
-                BleNavManager.sendNavigation(homePacket, force = true)
-            }
+            BleNavManager.sendNavigation(homePacket, force = true)
         }
     }
 }
