@@ -26,12 +26,23 @@ class NavNotificationService : NotificationListenerService() {
         if (sbn == null || sbn.packageName != MAPS_PACKAGE) return
         val notification = sbn.notification ?: return
         val extras = notification.extras ?: return
+        
+private fun cleanSpaces(s: String?): String {
+        return s.orEmpty()
+            .replace('\u00A0', ' ')
+            .replace('\u202F', ' ')
+            .replace('\u2007', ' ')
+            .replace('\u2009', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+        
 
-        val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
-        val rawText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
-        val rawBigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
-        val rawSubText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
-
+ val rawTitle = cleanSpaces(extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        val rawText = cleanSpaces(extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+        val rawBigText = cleanSpaces(extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString())
+        val rawSubText = cleanSpaces(extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString())
+        
         val turnBitmap = extractTurnBitmap(notification, extras)
 
         if (!sbn.isOngoing && turnBitmap == null) return
