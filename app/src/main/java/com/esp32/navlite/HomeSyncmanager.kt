@@ -59,6 +59,8 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     private var currentSpeedKmh = 0
     private var lastSpeedUpdateMs = 0L
     private var currentHeading = "N"
+    private var currentSunriseMin = 390   // default 6:30 am
+    private var currentSunsetMin = 1095   // default 6:15 pm
 
     private var lastSentPayload = ""
     private var lastSendMs = 0L
@@ -376,10 +378,20 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         }
     }
 
+   private fun parseIsoTimeToMinutes(iso: String?): Int? {
+        if (iso.isNullOrBlank()) return null
+        val tIdx = iso.indexOf('T')
+        if (tIdx < 0) return null
+        val parts = iso.substring(tIdx + 1).split(":")
+        val h = parts.getOrNull(0)?.toIntOrNull() ?: return null
+        val m = parts.getOrNull(1)?.take(2)?.toIntOrNull() ?: return null
+        return h * 60 + m
+    }
+
     private fun fetchWeatherTemp(lat: Double, lon: Double) {
         Thread {
             try {
-                val urlStr = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,weather_code,is_day"
+                val urlStr = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,weather_code,is_day&daily=sunrise,sunset&timezone=auto&forecast_days=1"
                 val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 8_000
@@ -387,15 +399,22 @@ object HomeSyncManager : SensorEventListener, LocationListener {
                 }
                 if (conn.responseCode == 200) {
                     val body = conn.inputStream.bufferedReader().use { it.readText() }
-                    val cur = JSONObject(body).getJSONObject("current")
+                    val root = JSONObject(body)
+                    val cur = root.getJSONObject("current")
                     val temp = cur.getDouble("temperature_2m").roundToInt().toString()
                     val code = cur.optInt("weather_code", -1)
                     val isDay = cur.optInt("is_day", 1)
                     val label = weatherCodeToLabel(code, isDay)
 
+                    val daily = root.optJSONObject("daily")
+                    val riseMin = parseIsoTimeToMinutes(daily?.optJSONArray("sunrise")?.optString(0))
+                    val setMin = parseIsoTimeToMinutes(daily?.optJSONArray("sunset")?.optString(0))
+
                     mainHandler.post {
                         currentTemp = temp
                         currentWeather = label
+                        if (riseMin != null) currentSunriseMin = riseMin
+                        if (setMin != null) currentSunsetMin = setMin
                         if (!isNavActive) sendHomePacket(force = true)
                     }
                 }
@@ -405,7 +424,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     }
 
     private fun sendHomePacket(force: Boolean) {
-        val meta = "$currentBattery|$currentTemp|$currentCity|$currentWeather|$currentSpeedKmh"
+        val meta = "$currentBattery|$currentTemp|$currentCity|$currentWeather|$currentSpeedKmh|$currentSunriseMin|$currentSunsetMin"
         val payload = "$currentTime|$meta|$currentHeading"
         if (!force && payload == lastSentPayload) return
 
