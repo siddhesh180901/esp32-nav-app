@@ -1,12 +1,19 @@
 package com.esp32.navlite
 
 import android.app.Notification
+import android.content.ComponentName
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
+import android.media.MediaMetadata
+import android.media.session.MediaController
+import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
 import android.os.Bundle
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import kotlin.math.abs
@@ -46,6 +53,25 @@ class NavNotificationService : NotificationListenerService() {
     private var lastMsgKey: String = ""
     private var lastMsgTimeMs: Long = 0L
 
+    // Live Music Tracking (Spotify, YT Music, Local Player)
+    private var mediaSessionManager: MediaSessionManager? = null
+    private val activeControllers = mutableListOf<MediaController>()
+    private var lastSentMusicKey: String = ""
+
+    private val sessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
+        attachMediaControllers(controllers ?: emptyList())
+    }
+
+    private val mediaCallback = object : MediaController.Callback() {
+        override fun onPlaybackStateChanged(state: PlaybackState?) {
+            syncCurrentMusic(force = false)
+        }
+
+        override fun onMetadataChanged(metadata: MediaMetadata?) {
+            syncCurrentMusic(force = true)
+        }
+    }
+
     private fun cleanSpaces(s: String?): String {
         return s.orEmpty()
             .replace('\u00A0', ' ')
@@ -68,6 +94,116 @@ class NavNotificationService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         HomeSyncManager.start(applicationContext)
+        setupMediaTracking()
+    }
+
+    override fun onDestroy() {
+        try {
+            mediaSessionManager?.removeOnActiveSessionsChangedListener(sessionsListener)
+        } catch (_: Exception) {}
+        detachAllMediaControllers()
+        super.onDestroy()
+    }
+
+    private fun setupMediaTracking() {
+        val msm = getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager ?: return
+        mediaSessionManager = msm
+        val comp = ComponentName(this, NavNotificationService::class.java)
+        try {
+            msm.removeOnActiveSessionsChangedListener(sessionsListener)
+            msm.addOnActiveSessionsChangedListener(sessionsListener, comp)
+            attachMediaControllers(msm.getActiveSessions(comp))
+        } catch (_: Exception) {}
+    }
+
+    private fun refreshActiveMediaSessions() {
+        val msm = mediaSessionManager ?: run {
+            setupMediaTracking()
+            return
+        }
+        val comp = ComponentName(this, NavNotificationService::class.java)
+        try {
+            attachMediaControllers(msm.getActiveSessions(comp))
+        } catch (_: Exception) {}
+    }
+
+    private fun detachAllMediaControllers() {
+        for (c in activeControllers) {
+            try { c.unregisterCallback(mediaCallback) } catch (_: Exception) {}
+        }
+        activeControllers.clear()
+    }
+
+    private fun attachMediaControllers(controllers: List<MediaController>) {
+        detachAllMediaControllers()
+        for (c in controllers) {
+            activeControllers.add(c)
+            try { c.registerCallback(mediaCallback) } catch (_: Exception) {}
+        }
+        syncCurrentMusic(force = true)
+    }
+
+    private fun syncCurrentMusic(force: Boolean) {
+        val playing = activeControllers.firstOrNull {
+            it.playbackState?.state == PlaybackState.STATE_PLAYING
+        }
+
+        if (playing == null) {
+            if (lastSentMusicKey != "0") {
+                lastSentMusicKey = "0"
+                BleNavManager.sendNavigation(
+                    NavData(
+                        active = true,
+                        distance = "0",
+                        directions = "#MUSIC#",
+                        title = "",
+                        duration = "",
+                        eta = "0|0"
+                    ),
+                    force = true
+                )
+            }
+            return
+        }
+
+        val meta = playing.metadata
+        val rawSong = meta?.getString(MediaMetadata.METADATA_KEY_TITLE)
+            ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+            ?: "Playing"
+        val songTitle = toOledAscii(cleanSpaces(rawSong), "Playing").take(28)
+
+        val durMs = meta?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+        val state = playing.playbackState
+        var posMs = state?.position ?: 0L
+        if (state != null && state.state == PlaybackState.STATE_PLAYING && state.lastPositionUpdateTime > 0L) {
+            val delta = SystemClock.elapsedRealtime() - state.lastPositionUpdateTime
+            val speed = if (state.playbackSpeed > 0f) state.playbackSpeed else 1f
+            posMs += (delta * speed).toLong()
+        }
+        if (durMs > 0L) {
+            posMs = posMs.coerceIn(0L, durMs)
+        } else if (posMs < 0L) {
+            posMs = 0L
+        }
+
+        val posSec = (posMs / 1000L).toInt()
+        val durSec = (durMs / 1000L).toInt()
+        val key = "1|$songTitle|$durSec|${posSec / 3}"
+
+        if (!force && key == lastSentMusicKey) return
+        lastSentMusicKey = key
+
+        BleNavManager.sendNavigation(
+            NavData(
+                active = true,
+                distance = "1",
+                directions = "#MUSIC#",
+                title = songTitle,
+                duration = "",
+                eta = "$posSec|$durSec"
+            ),
+            force = true
+        )
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -76,18 +212,25 @@ class NavNotificationService : NotificationListenerService() {
         val notification = sbn.notification ?: return
         val extras = notification.extras ?: return
 
+        // Media player notification aali tar session refresh kar
+        if (extras.containsKey(Notification.EXTRA_MEDIA_SESSION) ||
+            notification.category == Notification.CATEGORY_TRANSPORT
+        ) {
+            refreshActiveMediaSessions()
+        }
+
         // 1. Google Maps Turn-by-Turn Navigation
         if (pkg == MAPS_PACKAGE) {
             handleMapsNotification(sbn, notification, extras)
             return
         }
 
-        // 2. Incoming Call Alert (Phone Dialer / Truecaller / WhatsApp Call)
+        // 2. Incoming Call Alert
         if (handleCallNotification(sbn, pkg, notification, extras)) {
             return
         }
 
-        // 3. Incoming Message Alert (WhatsApp / SMS / Telegram)
+        // 3. Incoming Message Alert
         handleMessageNotification(sbn, pkg, notification, extras)
     }
 
@@ -102,7 +245,12 @@ class NavNotificationService : NotificationListenerService() {
             return
         }
 
-        // Call cut / uchllyavar OLED varun call popup lagech band kar
+        if (sbn.notification?.extras?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true ||
+            sbn.notification?.category == Notification.CATEGORY_TRANSPORT
+        ) {
+            refreshActiveMediaSessions()
+        }
+
         if (activeCallKey != null && (sbn.key == activeCallKey || pkg in CALL_PACKAGES || sbn.notification?.category == Notification.CATEGORY_CALL)) {
             activeCallKey = null
             BleNavManager.sendNavigation(
@@ -136,7 +284,6 @@ class NavNotificationService : NotificationListenerService() {
         val isCallRelated = isCallCategory || hasAnswerAction || (pkg in CALL_PACKAGES)
         if (!isCallRelated) return false
 
-        // Call uchalla gela (ongoing timer) ki popup band kar
         val isOngoingActiveCall = combined.contains("ongoing") ||
             combined.contains("on hold") ||
             combined.contains("dialing") ||
@@ -198,7 +345,6 @@ class NavNotificationService : NotificationListenerService() {
         val lowerTitle = rawTitle.lowercase()
         val lowerText = rawText.lowercase()
 
-        // WhatsApp / SMS chya faltu background notices ignore kar
         if (lowerTitle == "whatsapp" ||
             lowerTitle == "messages" ||
             lowerTitle.contains("checking for") ||
@@ -209,7 +355,6 @@ class NavNotificationService : NotificationListenerService() {
             lowerText.contains("messages from")
         ) return
 
-        // Group count kadh (uda. "Friends (3 messages)" -> "Friends")
         val cleanedTitle = rawTitle
             .replace(Regex("\\s*\\(\\d+\\s+messages?\\)", RegexOption.IGNORE_CASE), "")
             .trim()
