@@ -94,6 +94,7 @@ class NavNotificationService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         HomeSyncManager.start(applicationContext)
+        BleNavManager.ensureAutoReconnect(applicationContext) // <--- HI 1 LINE ADD KAR
         setupMediaTracking()
     }
 
