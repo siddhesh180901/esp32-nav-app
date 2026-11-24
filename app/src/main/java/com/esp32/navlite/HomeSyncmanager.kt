@@ -332,29 +332,120 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     }
 
     @Suppress("DEPRECATION")
+   
+    private fun isPureEnglish(s: String): Boolean {
+        if (s.isBlank()) return false
+        var hasLetter = false
+        for (ch in s) {
+            if (ch.code !in 32..126) return false
+            if (ch in 'A'..'Z' || ch in 'a'..'z') hasLetter = true
+        }
+        return hasLetter
+    }
+
+    private fun cleanCityLabel(raw: String): String {
+        var name = raw.trim()
+        if (name.length > 10) {
+            name = name
+                .replace(" West", "", ignoreCase = true)
+                .replace(" East", "", ignoreCase = true)
+                .replace(" North", "", ignoreCase = true)
+                .replace(" South", "", ignoreCase = true)
+                .trim()
+        }
+        return name.replace("|", " ").take(10).trim()
+    }
+
+    private fun fetchEnglishCityOnline(lat: Double, lon: Double): String? {
+        // 1. OpenStreetMap Nominatim (suburb/area exact English madhe deto)
+        try {
+            val urlStr = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lon&accept-language=en"
+            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8_000
+                readTimeout = 8_000
+                setRequestProperty("User-Agent", "ESP32NavLite/1.0")
+                setRequestProperty("Accept-Language", "en")
+            }
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val addr = JSONObject(body).optJSONObject("address")
+                if (addr != null) {
+                    val candidates = listOf(
+                        addr.optString("suburb"),
+                        addr.optString("neighbourhood"),
+                        addr.optString("city_district"),
+                        addr.optString("town"),
+                        addr.optString("city"),
+                        addr.optString("state_district")
+                    )
+                    val match = candidates.firstOrNull { isPureEnglish(it) }
+                    if (match != null) {
+                        conn.disconnect()
+                        return match
+                    }
+                }
+            }
+            conn.disconnect()
+        } catch (_: Exception) {}
+
+        // 2. Backup: BigDataCloud (English forced)
+        try {
+            val urlStr = "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=$lat&longitude=$lon&localityLanguage=en"
+            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8_000
+                readTimeout = 8_000
+            }
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val root = JSONObject(body)
+                val candidates = listOf(
+                    root.optString("locality"),
+                    root.optString("city"),
+                    root.optString("principalSubdivision")
+                )
+                val match = candidates.firstOrNull { isPureEnglish(it) }
+                if (match != null) {
+                    conn.disconnect()
+                    return match
+                }
+            }
+            conn.disconnect()
+        } catch (_: Exception) {}
+
+        return null
+    }
+
+    @Suppress("DEPRECATION")
     private fun fetchCityName(lat: Double, lon: Double) {
         val ctx = appContext ?: return
         Thread {
             try {
-                val geocoder = Geocoder(ctx, Locale.ENGLISH)
-                val list = geocoder.getFromLocation(lat, lon, 1)
-                val addr = list?.firstOrNull() ?: return@Thread
-                var name = addr.subLocality
-                    ?: addr.locality
-                    ?: addr.subAdminArea
-                    ?: addr.adminArea
-                    ?: return@Thread
+                var picked: String? = null
 
-                name = name.trim()
-                if (name.length > 10) {
-                    name = name
-                        .replace(" West", "", ignoreCase = true)
-                        .replace(" East", "", ignoreCase = true)
-                        .replace(" North", "", ignoreCase = true)
-                        .replace(" South", "", ignoreCase = true)
-                        .trim()
+                // Pahile phone chya Geocoder madhun check kar (fakt pure English asel tarach ghe)
+                try {
+                    val geocoder = Geocoder(ctx, Locale.US)
+                    val list = geocoder.getFromLocation(lat, lon, 1)
+                    val addr = list?.firstOrNull()
+                    if (addr != null) {
+                        val candidates = listOfNotNull(
+                            addr.subLocality,
+                            addr.locality,
+                            addr.subAdminArea,
+                            addr.adminArea
+                        )
+                        picked = candidates.firstOrNull { isPureEnglish(it) }
+                    }
+                } catch (_: Exception) {}
+
+                // Samsung S24 sarkhya phone var Marathi aala tar online English name ghe
+                if (picked == null) {
+                    picked = fetchEnglishCityOnline(lat, lon)
                 }
-                val cleanCity = name.replace("|", " ").take(10)
+
+                val cleanCity = picked?.let { cleanCityLabel(it) }.orEmpty()
                 if (cleanCity.isNotEmpty()) {
                     mainHandler.post {
                         currentCity = cleanCity
