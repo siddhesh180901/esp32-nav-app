@@ -324,7 +324,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
         if (lastWeatherFetchMs > 0L) {
             Location.distanceBetween(lastWeatherLat, lastWeatherLon, lat, lon, weatherDist)
         }
-        val needTemp = (currentTemp == "--") && (now - lastWeatherFetchMs) > 30_000L
+       val needTemp = (currentTemp == "--" || currentAltitude.isEmpty() || currentAqi.isEmpty()) && (now - lastWeatherFetchMs) > 30_000L
         if (needTemp || (now - lastWeatherFetchMs) > 900_000L || weatherDist[0] > 2_000f) {
             lastWeatherFetchMs = now
             lastWeatherLat = lat
@@ -546,8 +546,9 @@ object HomeSyncManager : SensorEventListener, LocationListener {
     }
 
     private fun sendHomePacket(force: Boolean) {
-        val meta = "$currentBattery|$currentTemp|$currentCity|$currentWeather|$currentSpeedKmh|$currentSunriseMin|$currentSunsetMin|$currentAltitude|$currentAqi"
-        val payload = "$currentTime|$meta|$currentHeading"
+        val meta = "$currentBattery|$currentTemp|$currentCity|$currentWeather|$currentSpeedKmh|$currentSunriseMin|$currentSunsetMin"
+        val headExtra = "$currentHeading|$currentAltitude|$currentAqi"
+        val payload = "$currentTime|$meta|$headExtra"
         if (!force && payload == lastSentPayload) return
 
         lastSentPayload = payload
@@ -559,7 +560,7 @@ object HomeSyncManager : SensorEventListener, LocationListener {
             directions = "#HOME#",
             title = meta,
             duration = "",
-            eta = currentHeading
+            eta = headExtra
         )
 
         mainHandler.post {
