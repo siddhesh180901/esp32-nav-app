@@ -2,245 +2,464 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/bg_dark"
+    android:background="#090A0D"
     android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:padding="16dp">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="ESP32 Nav Lite"
-            android:textColor="@color/text_primary"
-            android:textSize="26sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Minimal ChronosESP32 Navigation Bridge"
-            android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
-
-        <!-- Connection Status Card -->
+        <!-- Top Bar -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:background="@color/card_dark"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingBottom="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="CBR250R "
+                android:textColor="#F8FAFC"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="HUD"
+                android:textColor="#991B1B"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvBlePill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="#14171D"
+                android:paddingLeft="12dp"
+                android:paddingRight="12dp"
+                android:paddingTop="5dp"
+                android:paddingBottom="5dp"
+                android:text="● STANDBY"
+                android:textColor="#94A3B8"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Main Aviation-Racing HUD Panel -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#11141A"
             android:orientation="vertical"
             android:padding="16dp">
 
+            <!-- Direction / Compass Strip -->
             <TextView
-                android:layout_width="wrap_content"
+                android:id="@+id/tvHudCompassTape"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="CONNECTION STATUS"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp"
+                android:gravity="center"
+                android:letterSpacing="0.22"
+                android:text="N  ·  NE  ·  E"
+                android:textColor="#E2E8F0"
+                android:textSize="13sp"
                 android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/tvStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="Disconnected"
-                android:textColor="@color/accent_red"
-                android:textSize="18sp"
-                android:textStyle="bold" />
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="10dp"
+                android:background="#222731" />
 
-            <TextView
-                android:id="@+id/tvDeviceInfo"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="Target: ESP32 Nav"
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
-
+            <!-- Center Speed Gauge Readout -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingTop="18dp"
+                android:paddingBottom="18dp">
+
+                <TextView
+                    android:id="@+id/tvHudSpeed"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textColor="#FFFFFF"
+                    android:textSize="54sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:letterSpacing="0.15"
+                    android:text="KM/H"
+                    android:textColor="#991B1B"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginBottom="12dp"
+                android:background="#222731" />
+
+            <!-- MAX | TRIP | TIME Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:orientation="horizontal">
 
-                <Button
-                    android:id="@+id/btnConnect"
+                <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:backgroundTint="@color/accent_blue"
-                    android:text="Scan &amp; Connect"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text_primary" />
+                    android:gravity="center"
+                    android:orientation="vertical">
 
-                <Button
-                    android:id="@+id/btnDisconnect"
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="MAX"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp" />
+
+                    <TextView
+                        android:id="@+id/tvMaxSpeed"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 km/h"
+                        android:textColor="#F8FAFC"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="match_parent"
+                    android:background="#222731" />
+
+                <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="10dp"
                     android:layout_weight="1"
-                    android:backgroundTint="#334155"
-                    android:text="Disconnect"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text_primary" />
+                    android:gravity="center"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="TRIP"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp" />
+
+                    <TextView
+                        android:id="@+id/tvTripDist"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0.0 km"
+                        android:textColor="#F8FAFC"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="match_parent"
+                    android:background="#222731" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="TIME"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp" />
+
+                    <TextView
+                        android:id="@+id/tvTripTime"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0m"
+                        android:textColor="#F8FAFC"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Permissions Card -->
+        <!-- Trip Start / Stop & Log Preview -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:background="@color/card_dark"
+            android:layout_marginTop="10dp"
+            android:background="#11141A"
             android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="PERMISSIONS"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tvNotifStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="Google Maps Notification Access: Checking..."
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
-
-            <Button
-                android:id="@+id/btnNotifAccess"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:backgroundTint="#334155"
-                android:text="Enable Notification Access"
-                android:textAllCaps="false"
-                android:textColor="@color/text_primary" />
-        </LinearLayout>
-
-        <!-- Live Data Preview Card -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:background="@color/card_dark"
-            android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="LIVE OLED DATA"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tvLivePreview"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:fontFamily="monospace"
-                android:text="Waiting for Google Maps..."
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
-        </LinearLayout>
-
-        <!-- Quick OLED Test Card -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:background="@color/card_dark"
-            android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="TEST OLED ARROWS (WITHOUT MAPS)"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp"
-                android:textStyle="bold" />
+            android:padding="12dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
                 android:orientation="horizontal">
 
                 <Button
-                    android:id="@+id/btnTestLeft"
+                    android:id="@+id/btnTripToggle"
                     android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:backgroundTint="#334155"
-                    android:text="Left"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text_primary" />
-
-                <Button
-                    android:id="@+id/btnTestStraight"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:backgroundTint="#334155"
-                    android:text="Straight"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text_primary" />
-
-                <Button
-                    android:id="@+id/btnTestRight"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:backgroundTint="#334155"
-                    android:text="Right"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text_primary" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btnTestUturn"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:backgroundTint="#334155"
-                    android:text="U-Turn"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text_primary" />
-
-                <Button
-                    android:id="@+id/btnTestStop"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:backgroundTint="#7F1D1D"
-                    android:text="Stop Nav"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text_primary" />
+                    android:text="START TRIP"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnTripsFuelLog"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="8dp"
+                    android:backgroundTint="#1A1F28"
+                    android:paddingLeft="14dp"
+                    android:paddingRight="14dp"
+                    android:text="TRIPS &amp; FUEL"
+                    android:textColor="#E2E8F0"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvTripSummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Trip: No trips yet"
+                android:textColor="#94A3B8"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- Telemetry Cards (Temp/City, AQI/Alt) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:layout_weight="1"
+                android:background="#11141A"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:id="@+id/tvCardTemp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="--°C"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvCardCity"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Locating..."
+                    android:textColor="#94A3B8"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="5dp"
+                android:layout_weight="1"
+                android:background="#11141A"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="AQI / ALT"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp" />
+
+                <TextView
+                    android:id="@+id/tvCardAqiAlt"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="-- · --"
+                    android:textColor="#F8FAFC"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- Switches: Auto-Reconnect & GPS Speed Saver -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="#11141A"
+            android:orientation="horizontal"
+            android:paddingLeft="12dp"
+            android:paddingRight="12dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp">
+
+            <Switch
+                android:id="@+id/switchAutoReconnect"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:checked="true"
+                android:text="Auto-Connect"
+                android:textColor="#E2E8F0"
+                android:textSize="12sp" />
+
+            <Switch
+                android:id="@+id/switchGpsSpeed"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:checked="true"
+                android:text="GPS Speed"
+                android:textColor="#E2E8F0"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Compact Quick Test Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="#11141A"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="10dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:text="TEST"
+                android:textColor="#94A3B8"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnTestLeft"
+                android:layout_width="0dp"
+                android:layout_height="38dp"
+                android:layout_marginLeft="2dp"
+                android:layout_marginRight="2dp"
+                android:layout_weight="1"
+                android:backgroundTint="#1A1F28"
+                android:text="←"
+                android:textColor="#F8FAFC" />
+
+            <Button
+                android:id="@+id/btnTestStraight"
+                android:layout_width="0dp"
+                android:layout_height="38dp"
+                android:layout_marginLeft="2dp"
+                android:layout_marginRight="2dp"
+                android:layout_weight="1"
+                android:backgroundTint="#1A1F28"
+                android:text="↑"
+                android:textColor="#F8FAFC" />
+
+            <Button
+                android:id="@+id/btnTestRight"
+                android:layout_width="0dp"
+                android:layout_height="38dp"
+                android:layout_marginLeft="2dp"
+                android:layout_marginRight="2dp"
+                android:layout_weight="1"
+                android:backgroundTint="#1A1F28"
+                android:text="→"
+                android:textColor="#F8FAFC" />
+
+            <Button
+                android:id="@+id/btnTestUTurn"
+                android:layout_width="0dp"
+                android:layout_height="38dp"
+                android:layout_marginLeft="2dp"
+                android:layout_marginRight="2dp"
+                android:layout_weight="1"
+                android:backgroundTint="#1A1F28"
+                android:text="↶"
+                android:textColor="#F8FAFC" />
+        </LinearLayout>
+
+        <!-- Status & Notification Access -->
+        <TextView
+            android:id="@+id/tvBleStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="BLE: Disconnected"
+            android:textColor="#94A3B8"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/tvNotifStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Notification Access: Checking..."
+            android:textColor="#64748B"
+            android:textSize="11sp" />
+
+        <Button
+            android:id="@+id/btnNotifAccess"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="8dp"
+            android:backgroundTint="#161A22"
+            android:text="Enable Notification Access"
+            android:textColor="#CBD5E1"
+            android:textSize="11sp" />
+
+        <!-- Primary Connect / Disconnect Action -->
+        <Button
+            android:id="@+id/btnScanConnect"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="10dp"
+            android:backgroundTint="#7F1D1D"
+            android:text="SCAN &amp; CONNECT"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnDisconnect"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:layout_marginTop="6dp"
+            android:backgroundTint="#14171D"
+            android:text="DISCONNECT"
+            android:textColor="#94A3B8"
+            android:textSize="12sp" />
 
     </LinearLayout>
 </ScrollView>
