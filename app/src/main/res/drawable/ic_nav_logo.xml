@@ -1,13 +1,41 @@
-<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="48dp"
-    android:height="48dp"
-    android:viewportWidth="48"
-    android:viewportHeight="48">
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Matte Obsidian Background -->
     <path
-        android:fillColor="#1E293B"
-        android:pathData="M24,24m-24,0a24,24 0,1 1,48 0a24,24 0,1 1,-48 0" />
+        android:fillColor="#090A0D"
+        android:pathData="M18,0 H90 A18,18 0 0,1 108,18 V90 A18,18 0 0,1 90,108 H18 A18,18 0 0,1 0,90 V18 A18,18 0 0,1 18,0 Z" />
+
+    <!-- Subtle Deep Crimson Outer Ring -->
     <path
-        android:fillColor="#3B82F6"
-        android:pathData="M24,9 L36,37 L24,31 L12,37 Z" />
+        android:fillColor="#00000000"
+        android:strokeColor="#991B1B"
+        android:strokeWidth="2.4"
+        android:pathData="M54,12 A42,42 0 1,1 53.99,12 Z" />
+
+    <!-- Upper Fairing Cowl Silhouette (Silver) -->
+    <path
+        android:fillColor="#E2E8F0"
+        android:pathData="M24,42 L54,28 L84,42 L78,48 L54,37 L30,48 Z" />
+
+    <!-- Aggressive CBR Twin-Edge V-Headlight (Crimson Glow) -->
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M27,50 L49,57 L45,64 L24,55 Z" />
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M81,50 L59,57 L63,64 L84,55 Z" />
+
+    <!-- Center Nose Intake & Nav Chevron (Crisp White) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,44 L61,60 L54,56 L47,60 Z" />
+
+    <!-- Lower Chin Fairing Accent -->
+    <path
+        android:fillColor="#475569"
+        android:pathData="M36,70 L54,78 L72,70 L68,75 L54,82 L40,75 Z" />
 </vector>
