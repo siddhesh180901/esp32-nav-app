@@ -81,7 +81,7 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
         HomeSyncManager.tryStartLocationUpdates()
-        if (switchGpsSpeed.isChecked) {
+        if (switchGpsSpeed.isChecked && !HomeSyncManager.isBatterySaverActive()) {
             startTripLocationUpdates()
         }
         val bleGranted = requiredBlePermissions().all {
@@ -100,9 +100,10 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
 
         bindViews()
         loadPreferences()
+        HomeSyncManager.setBatterySaverEnabled(!switchGpsSpeed.isChecked)
         HomeSyncManager.start(applicationContext)
 
-        if (switchGpsSpeed.isChecked) {
+        if (switchGpsSpeed.isChecked && !HomeSyncManager.isBatterySaverActive()) {
             startTripLocationUpdates()
         }
 
@@ -117,7 +118,8 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
         switchGpsSpeed.setOnCheckedChangeListener { _, isChecked ->
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_GPS_SPEED, isChecked).apply()
-            if (isChecked) {
+            HomeSyncManager.setBatterySaverEnabled(!isChecked)
+            if (isChecked && !HomeSyncManager.isAutoEcoActive()) {
                 startTripLocationUpdates()
             } else {
                 stopTripLocationUpdates()
@@ -235,6 +237,7 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
         super.onResume()
         BleNavManager.setListener(this)
         updateNotificationAccessStatus()
+        HomeSyncManager.setBatterySaverEnabled(!switchGpsSpeed.isChecked)
         HomeSyncManager.start(applicationContext)
         if (switchAutoReconnect.isChecked && !isBleConnected) {
             triggerAutoReconnect()
@@ -250,7 +253,8 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
 
     override fun onStatusChanged(connected: Boolean, statusText: String, deviceName: String) {
         isBleConnected = connected
-        tvBleStatus.text = "BLE ($deviceName): $statusText"
+        val ecoTag = if (HomeSyncManager.isBatterySaverActive()) " [ECO]" else ""
+        tvBleStatus.text = "BLE ($deviceName): $statusText$ecoTag"
         if (connected) {
             tvBlePill.text = "● CONNECTED"
             tvBlePill.setTextColor(0xFF34D399.toInt())
@@ -282,7 +286,7 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
             tvCardAqiAlt.text = "AQI $aqi · $alt"
             tvHudCompassTape.text = "←  $heading  →"
 
-            if (switchGpsSpeed.isChecked && spd != null && spd >= 0) {
+            if (switchGpsSpeed.isChecked && !HomeSyncManager.isBatterySaverActive() && spd != null && spd >= 0) {
                 currentSpeedKmh = spd
                 tvHudSpeed.text = spd.toString()
                 if (isTripRunning && spd > maxSpeedKmh) {
@@ -403,7 +407,7 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
     }
 
     override fun onLocationChanged(location: Location) {
-        if (!switchGpsSpeed.isChecked) return
+        if (!switchGpsSpeed.isChecked || HomeSyncManager.isBatterySaverActive()) return
         val rawKmh = if (location.hasSpeed()) (location.speed * 3.6f).roundToInt() else 0
         val cleanKmh = if (rawKmh >= 3) rawKmh else 0
         currentSpeedKmh = cleanKmh
@@ -452,7 +456,7 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
 
         if (missing.isEmpty()) {
             HomeSyncManager.tryStartLocationUpdates()
-            if (switchGpsSpeed.isChecked) {
+            if (switchGpsSpeed.isChecked && !HomeSyncManager.isBatterySaverActive()) {
                 startTripLocationUpdates()
             }
             BleNavManager.startScanAndConnect(this)
