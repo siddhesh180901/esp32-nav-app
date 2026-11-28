@@ -5,85 +5,51 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.location.Location
-import android.location.LocationListener
-import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import kotlin.math.roundToInt
 
-class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListener {
+class MainActivity : AppCompatActivity(), BleNavManager.Listener {
 
     companion object {
         private const val PREFS_NAME = "esp32_nav_hud_prefs"
         private const val KEY_AUTO_RECONNECT = "auto_reconnect"
         private const val KEY_GPS_SPEED = "gps_speed_enabled"
-        private const val KEY_TRIP_HISTORY = "trip_history"
-        private const val KEY_FUEL_HISTORY = "fuel_history"
     }
 
     private lateinit var tvBlePill: TextView
-    private lateinit var tvHudCompassTape: TextView
     private lateinit var tvHudSpeed: TextView
-    private lateinit var tvMaxSpeed: TextView
-    private lateinit var tvTripDist: TextView
-    private lateinit var tvTripTime: TextView
-    private lateinit var tvTripSummary: TextView
-    private lateinit var tvCardTemp: TextView
-    private lateinit var tvCardCity: TextView
-    private lateinit var tvCardAqiAlt: TextView
+    private lateinit var tvHudCompass: TextView
+    private lateinit var tvHudTemp: TextView
+    private lateinit var tvHudMeta: TextView
     private lateinit var tvBleStatus: TextView
     private lateinit var tvNotifStatus: TextView
 
-    private lateinit var switchAutoReconnect: Switch
-    private lateinit var switchGpsSpeed: Switch
-    private lateinit var btnTripToggle: Button
-    private lateinit var btnTripsFuelLog: Button
-    private lateinit var btnNotifAccess: Button
+    private lateinit var etDestination: EditText
+    private lateinit var btnStartNav: Button
+    private lateinit var btnOpenMaps: Button
     private lateinit var btnScanConnect: Button
     private lateinit var btnDisconnect: Button
+    private lateinit var btnNotifAccess: Button
+    private lateinit var switchAutoReconnect: Switch
+    private lateinit var switchGpsSpeed: Switch
 
-    private val handler = Handler(Looper.getMainLooper())
     private var isBleConnected = false
-
-    private var isTripRunning = false
-    private var tripStartMs = 0L
-    private var tripDistanceMeters = 0.0
-    private var maxSpeedKmh = 0
-    private var currentSpeedKmh = 0
-    private var lastTripLocation: Location? = null
-
-    private val tripTicker = object : Runnable {
-        override fun run() {
-            if (isTripRunning) {
-                refreshTripUi()
-            }
-            handler.postDelayed(this, 1_000L)
-        }
-    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
         HomeSyncManager.tryStartLocationUpdates()
-        if (switchGpsSpeed.isChecked && !HomeSyncManager.isBatterySaverActive()) {
-            startTripLocationUpdates()
-        }
         val bleGranted = requiredBlePermissions().all {
             ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
         }
@@ -103,8 +69,33 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
         HomeSyncManager.setBatterySaverEnabled(!switchGpsSpeed.isChecked)
         HomeSyncManager.start(applicationContext)
 
-        if (switchGpsSpeed.isChecked && !HomeSyncManager.isBatterySaverActive()) {
-            startTripLocationUpdates()
+        etDestination.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_DONE) {
+                launchDirectBikeNavigation()
+                true
+            } else {
+                false
+            }
+        }
+
+        btnStartNav.setOnClickListener {
+            launchDirectBikeNavigation()
+        }
+
+        btnOpenMaps.setOnClickListener {
+            openGoogleMapsApp()
+        }
+
+        btnScanConnect.setOnClickListener {
+            ensureBlePermissionsAndConnect()
+        }
+
+        btnDisconnect.setOnClickListener {
+            BleNavManager.disconnect()
+        }
+
+        btnNotifAccess.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
 
         switchAutoReconnect.setOnCheckedChangeListener { _, isChecked ->
@@ -119,37 +110,9 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_GPS_SPEED, isChecked).apply()
             HomeSyncManager.setBatterySaverEnabled(!isChecked)
-            if (isChecked && !HomeSyncManager.isAutoEcoActive()) {
-                startTripLocationUpdates()
-            } else {
-                stopTripLocationUpdates()
-                currentSpeedKmh = 0
+            if (!isChecked) {
                 tvHudSpeed.text = "0"
             }
-        }
-
-        btnTripToggle.setOnClickListener {
-            if (!isTripRunning) {
-                startNewTrip()
-            } else {
-                stopAndSaveTrip()
-            }
-        }
-
-        btnTripsFuelLog.setOnClickListener {
-            showTripsAndFuelDialog()
-        }
-
-        btnNotifAccess.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-        }
-
-        btnScanConnect.setOnClickListener {
-            ensureBlePermissionsAndConnect()
-        }
-
-        btnDisconnect.setOnClickListener {
-            BleNavManager.disconnect()
         }
 
         findViewById<Button>(R.id.btnTestLeft).setOnClickListener {
@@ -184,39 +147,72 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
             )
         }
 
-        refreshTripUi()
-        refreshSummaryText()
-        handler.removeCallbacks(tripTicker)
-        handler.post(tripTicker)
+        findViewById<Button>(R.id.btnTestStop).setOnClickListener {
+            BleNavManager.sendNavigation(NavData(active = false), force = true)
+            HomeSyncManager.setNavigationActive(false)
+        }
     }
 
     private fun bindViews() {
         tvBlePill = findViewById(R.id.tvBlePill)
-        tvHudCompassTape = findViewById(R.id.tvHudCompassTape)
         tvHudSpeed = findViewById(R.id.tvHudSpeed)
-        tvMaxSpeed = findViewById(R.id.tvMaxSpeed)
-        tvTripDist = findViewById(R.id.tvTripDist)
-        tvTripTime = findViewById(R.id.tvTripTime)
-        tvTripSummary = findViewById(R.id.tvTripSummary)
-        tvCardTemp = findViewById(R.id.tvCardTemp)
-        tvCardCity = findViewById(R.id.tvCardCity)
-        tvCardAqiAlt = findViewById(R.id.tvCardAqiAlt)
+        tvHudCompass = findViewById(R.id.tvHudCompass)
+        tvHudTemp = findViewById(R.id.tvHudTemp)
+        tvHudMeta = findViewById(R.id.tvHudMeta)
         tvBleStatus = findViewById(R.id.tvBleStatus)
         tvNotifStatus = findViewById(R.id.tvNotifStatus)
 
-        switchAutoReconnect = findViewById(R.id.switchAutoReconnect)
-        switchGpsSpeed = findViewById(R.id.switchGpsSpeed)
-        btnTripToggle = findViewById(R.id.btnTripToggle)
-        btnTripsFuelLog = findViewById(R.id.btnTripsFuelLog)
-        btnNotifAccess = findViewById(R.id.btnNotifAccess)
+        etDestination = findViewById(R.id.etDestination)
+        btnStartNav = findViewById(R.id.btnStartNav)
+        btnOpenMaps = findViewById(R.id.btnOpenMaps)
         btnScanConnect = findViewById(R.id.btnScanConnect)
         btnDisconnect = findViewById(R.id.btnDisconnect)
+        btnNotifAccess = findViewById(R.id.btnNotifAccess)
+        switchAutoReconnect = findViewById(R.id.switchAutoReconnect)
+        switchGpsSpeed = findViewById(R.id.switchGpsSpeed)
     }
 
     private fun loadPreferences() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         switchAutoReconnect.isChecked = prefs.getBoolean(KEY_AUTO_RECONNECT, true)
         switchGpsSpeed.isChecked = prefs.getBoolean(KEY_GPS_SPEED, true)
+    }
+
+    private fun launchDirectBikeNavigation() {
+        val dest = etDestination.text?.toString()?.trim().orEmpty()
+        if (dest.isEmpty()) {
+            openGoogleMapsApp()
+            return
+        }
+        try {
+            // mode=l opens Google Maps directly in Two-Wheeler (Bike) navigation
+            val uri = Uri.parse("google.navigation:q=${Uri.encode(dest)}&mode=l")
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                setPackage("com.google.android.apps.maps")
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                val fallbackUri = Uri.parse("google.navigation:q=${Uri.encode(dest)}")
+                startActivity(Intent(Intent.ACTION_VIEW, fallbackUri))
+            } catch (_: Exception) {
+                Toast.makeText(this, "Google Maps not found", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun openGoogleMapsApp() {
+        val launchIntent = packageManager.getLaunchIntentForPackage("com.google.android.apps.maps")
+        if (launchIntent != null) {
+            startActivity(launchIntent)
+        } else {
+            try {
+                val uri = Uri.parse("geo:0,0?q=")
+                startActivity(Intent(Intent.ACTION_VIEW, uri))
+            } catch (_: Exception) {
+                Toast.makeText(this, "Google Maps not installed", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun triggerAutoReconnect() {
@@ -246,8 +242,6 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
 
     override fun onDestroy() {
         super.onDestroy()
-        handler.removeCallbacks(tripTicker)
-        stopTripLocationUpdates()
         BleNavManager.setListener(null)
     }
 
@@ -273,166 +267,24 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
 
             val metaParts = roadMeta.split("|")
             val temp = metaParts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: "--"
-            val city = metaParts.getOrNull(2)?.takeIf { it.isNotBlank() } ?: "--"
-            val spd = metaParts.getOrNull(4)?.toIntOrNull()
+            val city = metaParts.getOrNull(2)?.takeIf { it.isNotBlank() } ?: "Locating..."
+            val spd = metaParts.getOrNull(4)?.toIntOrNull() ?: 0
 
             val headParts = etaMeta.split("|")
-            val heading = headParts.getOrNull(0)?.takeIf { it.isNotBlank() } ?: "NE"
+            val heading = headParts.getOrNull(0)?.takeIf { it.isNotBlank() } ?: "N"
             val alt = headParts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: "--"
             val aqi = headParts.getOrNull(2)?.takeIf { it.isNotBlank() } ?: "--"
 
-            tvCardTemp.text = "${temp}°C"
-            tvCardCity.text = city
-            tvCardAqiAlt.text = "AQI $aqi · $alt"
-            tvHudCompassTape.text = "←  $heading  →"
-
-            if (switchGpsSpeed.isChecked && !HomeSyncManager.isBatterySaverActive() && spd != null && spd >= 0) {
-                currentSpeedKmh = spd
-                tvHudSpeed.text = spd.toString()
-                if (isTripRunning && spd > maxSpeedKmh) {
-                    maxSpeedKmh = spd
-                    refreshTripUi()
-                }
+            tvHudTemp.text = "${temp}°C"
+            tvHudCompass.text = heading
+            tvHudMeta.text = "$city  ·  ALT $alt  ·  AQI $aqi"
+            tvHudSpeed.text = if (switchGpsSpeed.isChecked && !HomeSyncManager.isBatterySaverActive()) {
+                spd.toString()
+            } else {
+                "0"
             }
         }
     }
-
-    private fun startNewTrip() {
-        isTripRunning = true
-        tripStartMs = System.currentTimeMillis()
-        tripDistanceMeters = 0.0
-        maxSpeedKmh = currentSpeedKmh
-        lastTripLocation = null
-        btnTripToggle.text = "STOP & SAVE TRIP"
-        refreshTripUi()
-        Toast.makeText(this, "Trip started", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun stopAndSaveTrip() {
-        if (!isTripRunning) return
-        val elapsedMin = ((System.currentTimeMillis() - tripStartMs) / 60_000L).coerceAtLeast(1L)
-        val distKm = tripDistanceMeters / 1000.0
-        val stamp = SimpleDateFormat("dd MMM HH:mm", Locale.US).format(Date())
-        val entry = "$stamp | ${String.format(Locale.US, "%.1f", distKm)}km | Max ${maxSpeedKmh}km/h | ${elapsedMin}m"
-
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val existing = prefs.getString(KEY_TRIP_HISTORY, "") ?: ""
-        val updated = if (existing.isEmpty()) entry else "$entry\n$existing"
-        prefs.edit().putString(KEY_TRIP_HISTORY, updated.lines().take(25).joinToString("\n")).apply()
-
-        isTripRunning = false
-        lastTripLocation = null
-        btnTripToggle.text = "START TRIP"
-        refreshTripUi()
-        refreshSummaryText()
-        Toast.makeText(this, "Trip saved", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun refreshTripUi() {
-        val elapsedSec = if (isTripRunning) ((System.currentTimeMillis() - tripStartMs) / 1000L) else 0L
-        val mins = elapsedSec / 60L
-        val hrs = mins / 60L
-        val remMin = mins % 60L
-        tvTripTime.text = if (hrs > 0) "${hrs}h ${remMin}m" else "${mins}m"
-        tvTripDist.text = String.format(Locale.US, "%.1f km", tripDistanceMeters / 1000.0)
-        tvMaxSpeed.text = "$maxSpeedKmh km/h"
-    }
-
-    private fun refreshSummaryText() {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val trips = (prefs.getString(KEY_TRIP_HISTORY, "") ?: "").lines().filter { it.isNotBlank() }
-        val fuel = (prefs.getString(KEY_FUEL_HISTORY, "") ?: "").lines().filter { it.isNotBlank() }
-        val lastTrip = trips.firstOrNull() ?: "No trips yet"
-        val lastFuel = fuel.firstOrNull() ?: "No fuel entries"
-        tvTripSummary.text = "Trip: $lastTrip\nFuel: $lastFuel"
-    }
-
-    private fun showTripsAndFuelDialog() {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val trips = prefs.getString(KEY_TRIP_HISTORY, "")?.ifBlank { "No saved trips yet." } ?: "No saved trips yet."
-        val fuel = prefs.getString(KEY_FUEL_HISTORY, "")?.ifBlank { "No fuel entries yet." } ?: "No fuel entries yet."
-
-        AlertDialog.Builder(this)
-            .setTitle("Previous Trips & Fuel Log")
-            .setMessage("--- PREVIOUS TRIPS ---\n$trips\n\n--- FUEL LOG ---\n$fuel")
-            .setPositiveButton("Add Fuel Entry") { _, _ -> showAddFuelDialog() }
-            .setNegativeButton("Close", null)
-            .show()
-    }
-
-    private fun showAddFuelDialog() {
-        val input = EditText(this).apply {
-            hint = "e.g. 5.0L @ ₹530 (Full Tank)"
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Log Fuel Top-Up / Full Tank")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val note = input.text?.toString()?.trim().orEmpty()
-                if (note.isNotEmpty()) {
-                    val stamp = SimpleDateFormat("dd MMM", Locale.US).format(Date())
-                    val entry = "$stamp: $note"
-                    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    val existing = prefs.getString(KEY_FUEL_HISTORY, "") ?: ""
-                    val updated = if (existing.isEmpty()) entry else "$entry\n$existing"
-                    prefs.edit().putString(KEY_FUEL_HISTORY, updated.lines().take(25).joinToString("\n")).apply()
-                    refreshSummaryText()
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    @Suppress("MissingPermission")
-    private fun startTripLocationUpdates() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
-        try {
-            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2_000L, 2f, this, Looper.getMainLooper())
-            }
-        } catch (_: Exception) {}
-    }
-
-    @Suppress("MissingPermission")
-    private fun stopTripLocationUpdates() {
-        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
-        try {
-            lm.removeUpdates(this)
-        } catch (_: Exception) {}
-    }
-
-    override fun onLocationChanged(location: Location) {
-        if (!switchGpsSpeed.isChecked || HomeSyncManager.isBatterySaverActive()) return
-        val rawKmh = if (location.hasSpeed()) (location.speed * 3.6f).roundToInt() else 0
-        val cleanKmh = if (rawKmh >= 3) rawKmh else 0
-        currentSpeedKmh = cleanKmh
-        tvHudSpeed.text = cleanKmh.toString()
-
-        if (isTripRunning) {
-            if (cleanKmh > maxSpeedKmh) {
-                maxSpeedKmh = cleanKmh
-            }
-            val prev = lastTripLocation
-            if (prev != null && cleanKmh >= 3) {
-                val dist = prev.distanceTo(location).toDouble()
-                if (dist in 1.5..500.0) {
-                    tripDistanceMeters += dist
-                }
-            }
-            lastTripLocation = location
-            refreshTripUi()
-        }
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-    override fun onProviderEnabled(provider: String) {}
-    override fun onProviderDisabled(provider: String) {}
 
     private fun requiredBlePermissions(): Array<String> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -456,9 +308,6 @@ class MainActivity : AppCompatActivity(), BleNavManager.Listener, LocationListen
 
         if (missing.isEmpty()) {
             HomeSyncManager.tryStartLocationUpdates()
-            if (switchGpsSpeed.isChecked && !HomeSyncManager.isBatterySaverActive()) {
-                startTripLocationUpdates()
-            }
             BleNavManager.startScanAndConnect(this)
         } else {
             permissionLauncher.launch(missing.toTypedArray())
