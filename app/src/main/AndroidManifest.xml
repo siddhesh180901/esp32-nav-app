@@ -27,7 +27,7 @@
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_nav_logo"
-        android:label="ESP32 Nav Lite"
+        android:label="CBR250R HUD"
         android:supportsRtl="true"
         android:theme="@style/Theme.ESP32NavLite">
 
