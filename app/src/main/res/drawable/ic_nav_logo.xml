@@ -5,42 +5,53 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Matte Obsidian Background -->
+    <!-- Deep Matte Black Base -->
     <path
-        android:fillColor="#0B0D12"
+        android:fillColor="#080A0F"
         android:pathData="M0,0 H108 V108 H0 Z" />
 
-    <!-- Subtle Dark Graphite Instrument Ring -->
+    <!-- Subtle Dark Hex Tech Badge -->
     <path
-        android:fillColor="#00000000"
-        android:strokeColor="#1F2430"
-        android:strokeWidth="3"
-        android:pathData="M54,20 A34,34 0 1,0 54,88 A34,34 0 1,0 54,20 Z" />
+        android:fillColor="#111520"
+        android:strokeColor="#273043"
+        android:strokeWidth="2"
+        android:pathData="M54,18 L85,34 L85,74 L54,90 L23,74 L23,34 Z" />
 
-    <!-- Brushed Silver Speed Arc -->
+    <!-- Left Aerodynamic Wing Blades (Brushed Silver) -->
     <path
-        android:fillColor="#00000000"
-        android:strokeColor="#CBD5E1"
-        android:strokeWidth="5"
-        android:strokeLineCap="round"
-        android:pathData="M30,78 A34,34 0 0,1 78,30" />
-
-    <!-- Honda Deep Crimson Redline Zone -->
+        android:fillColor="#CBD5E1"
+        android:pathData="M24,44 L44,50 L41,56 L26,51 Z" />
     <path
-        android:fillColor="#00000000"
-        android:strokeColor="#B91C1C"
-        android:strokeWidth="5"
-        android:strokeLineCap="round"
-        android:pathData="M78,30 A34,34 0 0,1 78,78" />
-
-    <!-- Crisp White HUD Navigation Chevron -->
+        android:fillColor="#94A3B8"
+        android:pathData="M27,55 L42,59 L40,64 L29,60 Z" />
     <path
-        android:fillColor="#F8FAFC"
-        android:pathData="M54,33 L70,67 L54,59 L38,67 Z" />
+        android:fillColor="#64748B"
+        android:pathData="M31,64 L41,67 L39,71 L33,68 Z" />
 
-    <!-- Subtle Crimson Core Accent -->
+    <!-- Right Aerodynamic Wing Blades (Brushed Silver) -->
+    <path
+        android:fillColor="#CBD5E1"
+        android:pathData="M84,44 L64,50 L67,56 L82,51 Z" />
+    <path
+        android:fillColor="#94A3B8"
+        android:pathData="M81,55 L66,59 L68,64 L79,60 Z" />
+    <path
+        android:fillColor="#64748B"
+        android:pathData="M77,64 L67,67 L69,71 L75,68 Z" />
+
+    <!-- Center Forward Navigation Chevron (Honda Racing Crimson) -->
     <path
         android:fillColor="#DC2626"
-        android:pathData="M54,63 L59,71 L54,75 L49,71 Z" />
+        android:pathData="M54,24 L69,68 L54,58 L39,68 Z" />
+
+    <!-- Inner Crisp White Speed Core -->
+    <path
+        android:fillColor="#F8FAFC"
+        android:pathData="M54,34 L61,57 L54,52 L47,57 Z" />
+
+    <!-- Bottom Red Accent Pointer -->
+    <path
+        android:fillColor="#991B1B"
+        android:pathData="M54,66 L61,76 L54,82 L47,76 Z" />
 
 </vector>
