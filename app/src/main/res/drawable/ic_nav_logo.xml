@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -6,36 +7,40 @@
 
     <!-- Matte Obsidian Background -->
     <path
-        android:fillColor="#090A0D"
-        android:pathData="M18,0 H90 A18,18 0 0,1 108,18 V90 A18,18 0 0,1 90,108 H18 A18,18 0 0,1 0,90 V18 A18,18 0 0,1 18,0 Z" />
+        android:fillColor="#0B0D12"
+        android:pathData="M0,0 H108 V108 H0 Z" />
 
-    <!-- Subtle Deep Crimson Outer Ring -->
+    <!-- Subtle Dark Graphite Instrument Ring -->
     <path
         android:fillColor="#00000000"
-        android:strokeColor="#991B1B"
-        android:strokeWidth="2.4"
-        android:pathData="M54,12 A42,42 0 1,1 53.99,12 Z" />
+        android:strokeColor="#1F2430"
+        android:strokeWidth="3"
+        android:pathData="M54,20 A34,34 0 1,0 54,88 A34,34 0 1,0 54,20 Z" />
 
-    <!-- Upper Fairing Cowl Silhouette (Silver) -->
+    <!-- Brushed Silver Speed Arc -->
     <path
-        android:fillColor="#E2E8F0"
-        android:pathData="M24,42 L54,28 L84,42 L78,48 L54,37 L30,48 Z" />
+        android:fillColor="#00000000"
+        android:strokeColor="#CBD5E1"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M30,78 A34,34 0 0,1 78,30" />
 
-    <!-- Aggressive CBR Twin-Edge V-Headlight (Crimson Glow) -->
+    <!-- Honda Deep Crimson Redline Zone -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#B91C1C"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M78,30 A34,34 0 0,1 78,78" />
+
+    <!-- Crisp White HUD Navigation Chevron -->
+    <path
+        android:fillColor="#F8FAFC"
+        android:pathData="M54,33 L70,67 L54,59 L38,67 Z" />
+
+    <!-- Subtle Crimson Core Accent -->
     <path
         android:fillColor="#DC2626"
-        android:pathData="M27,50 L49,57 L45,64 L24,55 Z" />
-    <path
-        android:fillColor="#DC2626"
-        android:pathData="M81,50 L59,57 L63,64 L84,55 Z" />
+        android:pathData="M54,63 L59,71 L54,75 L49,71 Z" />
 
-    <!-- Center Nose Intake & Nav Chevron (Crisp White) -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,44 L61,60 L54,56 L47,60 Z" />
-
-    <!-- Lower Chin Fairing Accent -->
-    <path
-        android:fillColor="#475569"
-        android:pathData="M36,70 L54,78 L72,70 L68,75 L54,82 L40,75 Z" />
 </vector>
